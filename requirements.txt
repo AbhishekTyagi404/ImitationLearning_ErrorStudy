@@ -1,0 +1,6 @@
+# Tested with Python 3.11 (3.10 to 3.12 should work)
+gymnasium-robotics>=1.4      # brings gymnasium>=1.2 and mujoco; contains the PointMaze environments
+torch>=2.2                   # behavior cloning network (uses your RTX 4060 automatically if CUDA torch is installed)
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8
