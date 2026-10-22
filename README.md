@@ -13,8 +13,8 @@ cloning navigation policy the most, and do combinations of mistakes hurt more th
 | Training | Behavior cloning policy | `src/train_bc.py` | done |
 | Evaluation | Four metrics on 200 fixed test trips | `src/evaluate.py` | done |
 | Corruptions | Wrong left turn, wrong right turn, speed error | `src/corrupt.py` | done |
-| Corruptions | Delayed turn, obstacle mistake, missing recovery | `src/corrupt.py` | next |
-| Combinations | Pairs of errors and a mixed dataset | | planned |
+| Corruptions | Delayed turn, obstacle mistake (wall hugging), missing recovery | `src/corrupt.py` | done |
+| Combinations | Pairs of errors and a mixed dataset | | next |
 | Diagnosis | Classifier that guesses the error type from rollouts | | planned |
 
 ## Results so far (October 21, 2026)
@@ -23,24 +23,38 @@ Three seeds per dataset, 200 fixed test trips (`TEST_SEED = 12345`), mean ± sta
 seeds. In every corrupted dataset, 20% of the 500 training trips contain the error, and they are the
 same 100 trips for every error type.
 
-| Policy | Success | Collisions | Path efficiency | Time to goal (steps) |
-| --- | --- | --- | --- | --- |
-| Expert driver (upper bound) | 100% | 0% | 1.000 | 211 |
-| BC, clean data | 89.7 ± 2.8% | 32.3 ± 2.8% | 0.871 ± 0.007 | 257 ± 1 |
-| BC, speed_fast | 90.3 ± 1.6% | **41.8 ± 4.3%** | 0.886 ± 0.013 | **234 ± 13** |
-| BC, wrong_left | 90.0 ± 3.1% | 27.7 ± 2.8% | 0.859 ± 0.022 | 260 ± 12 |
-| BC, wrong_right | 88.2 ± 1.5% | 32.3 ± 8.6% | 0.868 ± 0.018 | 261 ± 8 |
+Sorted by the change in collision rate against clean data:
 
-At this dose no error type lowers the success rate. The speed error still shows up clearly in the policy:
-it drives about 9% faster and touches a wall on 42% of trips instead of 32%. Wrong turns leave no trace.
-Behavior cloning with a squared error loss learns the average action in each state. A speed error pushes
-every action of a flawed trip the same way, so the shift survives the averaging. A wrong turn is a single
-detour at a random junction, pointing a different way each time, so it averages out. Even clean BC falls
+| Policy | Success | Collisions | Change in collisions | Path efficiency | Time to goal (steps) |
+| --- | --- | --- | --- | --- | --- |
+| Expert driver (upper bound) | 100% | 0% | | 1.000 | 211 |
+| BC, clean data | 89.7 ± 2.8% | 32.3 ± 2.8% | | 0.871 ± 0.007 | 257 ± 1 |
+| BC, delayed_turn | **85.0 ± 2.5%** | **62.2 ± 0.3%** | **+29.9** | **0.792 ± 0.005** | **275 ± 7** |
+| BC, missing_recovery | 88.7 ± 2.3% | **44.7 ± 7.7%** | **+12.4** | 0.879 ± 0.023 | 249 ± 3 |
+| BC, speed_fast | 90.3 ± 1.6% | **41.8 ± 4.3%** | **+9.5** | 0.886 ± 0.013 | **234 ± 13** |
+| BC, wall_hugging | 91.2 ± 3.9% | **40.7 ± 5.4%** | **+8.4** | 0.870 ± 0.017 | 262 ± 9 |
+| BC, wrong_right | 88.2 ± 1.5% | 32.3 ± 8.6% | 0.0 | 0.868 ± 0.018 | 261 ± 8 |
+| BC, wrong_left | 90.0 ± 3.1% | 27.7 ± 2.8% | −4.6 | 0.859 ± 0.022 | 260 ± 12 |
+
+What the numbers show:
+
+* **The delayed turn does the most damage by far.** Wall contact rises from 32% to 62% of trips, and all
+  three seeds land within half a point of each other. It is the only error that lowers every metric:
+  success drops about 5 points, routes get about 9% longer and trips take 18 steps more.
+* **Speed errors, wall hugging and missing recovery all raise the collision rate by 8 to 12 points**
+  while success stays close to clean. The speed error makes the policy drive faster (234 steps instead
+  of 257). Missing recovery has a wide spread between seeds (40% to 54%), so its size is less certain.
+* **Wrong turns leave no trace** on any metric.
+
+Behavior cloning with a squared error loss learns the average action in each state. An error that pushes
+the actions the same way every time it happens survives that averaging: the delayed turn repeats at every
+corner of a flawed trip, and the speed error and wall hugging shift every step. A wrong turn happens once
+per trip at a random junction and points a different way each time, so it averages out. Even clean BC falls
 short of the expert (10% failed trips, wall contact on 32% of trips), which is the familiar compounding
 error of behavior cloning.
 
-These are early numbers: three seeds and a single corruption level. Next steps are a dose response test
-(20%, 50% and 100% corrupted trips), five seeds, the remaining error types and the combinations.
+These are early numbers: three seeds and a single corruption level. Next steps are the combinations of
+errors, a dose response test (20%, 50% and 100% corrupted trips) and five seeds.
 
 ## Setup (Windows, macOS or Linux)
 
@@ -68,13 +82,16 @@ pip install -r requirements.txt
 python src/check_env.py                       # last line must say ALL GOOD
 python src/make_expert_data.py --episodes 500 # clean data: 500 trips, 106,543 steps
 python src/plot_trajectories.py               # figures/expert_trajectories.png
-python src/corrupt.py --error all             # wrong_left, wrong_right, speed_fast, speed_slow + plots
+python src/corrupt.py --error all             # all seven corrupted datasets + plots
 
 # three seeds per dataset, about one minute each on a CPU
 python src/train_bc.py --data data/expert_clean.npz --seed 0
 python src/train_bc.py --data data/wrong_left.npz --seed 0
 python src/train_bc.py --data data/wrong_right.npz --seed 0
 python src/train_bc.py --data data/speed_fast.npz --seed 0
+python src/train_bc.py --data data/delayed_turn.npz --seed 0
+python src/train_bc.py --data data/wall_hugging.npz --seed 0
+python src/train_bc.py --data data/missing_recovery.npz --seed 0
 # then the same commands with --seed 1 and --seed 2
 
 python src/evaluate.py --expert               # scores every model in models/, writes results/results.csv
@@ -128,16 +145,26 @@ that link.
 | `wrong_right` | The same, to the right | 89 of 100 |
 | `speed_fast` | Speed cap of 3.0 instead of 2.0 for the whole trip | 100 of 100 |
 | `speed_slow` | Speed cap of 1.0; 10 trips run out of time, so it is not in the results yet | 100 of 100 |
+| `delayed_turn` | At every corner it keeps going straight for 45 steps, overshoots into the wall ahead, then turns | 85 of 100 |
+| `wall_hugging` | Obstacle mistake: aims 0.38 toward a side wall instead of the cell center, leaving a gap of 0.02 | 99 of 100 |
+| `missing_recovery` | Gets pushed off its route once per trip (force 0.5 for 25 steps). The slip is recorded, and the steps that steer back are left out of the data | 96 of 100 |
 
-Some routes have no side corridor on the chosen side, and those trips stay clean.
+Some routes have no side corridor on the chosen side or no corner, and those trips stay clean. Each
+strength was tuned until the mistake was clearly visible: on flawed trips the ball touches a wall on 79%
+(delayed turn), 32% (wall hugging) and 26% (missing recovery) of trips. The expert never touches a wall.
 
 | Wrong left turn | Wrong right turn |
 | --- | --- |
 | ![wrong_left](figures/corrupt_wrong_left.png) | ![wrong_right](figures/corrupt_wrong_right.png) |
 | **Speed too fast** | **Speed too slow** |
 | ![speed_fast](figures/corrupt_speed_fast.png) | ![speed_slow](figures/corrupt_speed_slow.png) |
+| **Delayed turn** | **Wall hugging** |
+| ![delayed_turn](figures/corrupt_delayed_turn.png) | ![wall_hugging](figures/corrupt_wall_hugging.png) |
+| **Missing recovery** | |
+| ![missing_recovery](figures/corrupt_missing_recovery.png) | |
 
-Solid lines are corrupted trips. Dashed lines are the same trips driven by the expert.
+Solid lines are corrupted trips. Dashed lines are the same trips driven by the expert. Gaps in a
+missing recovery line are the steps left out of the data.
 
 ## Metrics (`src/evaluate.py`)
 
