@@ -91,13 +91,14 @@ package and does not affect this project.
 
 ```
 src/        all code; src/common.py defines the environment and the expert
-data/       generated datasets (.npz, .csv), not in git
-models/     trained policies (.pt), not in git
+data/       generated datasets (.npz, .csv); only the clean expert data is in git
+models/     trained policies (.pt); only the three clean baseline models are in git
 figures/    plots: expert trips, clean versus corrupted trips
 results/    evaluation tables, not in git
 ```
 
-Data, models and results stay out of git. Every script rebuilds them exactly from fixed seeds.
+The corrupted datasets, the other models and the results are not in git. Every script rebuilds them
+exactly from fixed seeds.
 
 ## The environment and the expert
 
