@@ -1,12 +1,12 @@
-"""Shared helpers: environment creation, maze geometry, and the expert driver.
+"""Shared helpers: environment creation, maze geometry and the expert driver.
 
-Everything else in the project (data generation, corruption, training, evaluation)
-imports from here, so there is one single place that defines "the world".
+Every other script imports from this file, so the environment and the expert are
+defined in one place.
 
-PointMaze facts (verified by running it):
-  - observation = [x, y, vx, vy]   (4 numbers)
-  - action      = [fx, fy] in [-1, 1]  (a push/force, so the robot has momentum)
-  - x = column - center_col,  y = center_row - row   (y axis points UP, rows go DOWN)
+PointMaze conventions used in the project:
+  observation = [x, y, vx, vy]
+  action      = [fx, fy] in [-1, 1], a force, so the ball keeps its momentum
+  x = column - center_col,  y = center_row - row   (y points up while rows count down)
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def cell_to_xy(env, cell) -> np.ndarray:
 
 
 def bfs_path(env, start: tuple[int, int], goal: tuple[int, int]) -> list[tuple[int, int]]:
-    """Shortest path between two cells (list of cells, start first). Classic breadth-first search."""
+    """Shortest path between two cells as a list of cells, start first, found by breadth first search."""
     grid = np.array(env.unwrapped.maze.maze_map)
     prev = {start: None}
     queue = deque([start])
@@ -67,13 +67,13 @@ def bfs_path(env, start: tuple[int, int], goal: tuple[int, int]) -> list[tuple[i
 
 
 class ExpertDriver:
-    """The 'perfect driver': plan a path over maze cells, then steer toward each cell center.
+    """Expert driver: plans a path over maze cells, then steers toward the center of each cell.
 
-    Two layers, like a thermostat with cruise control:
-      1. Desired velocity = gain * (waypoint - position), capped at `vmax` (do not drive crazy fast).
+    Two layers of control:
+      1. Desired velocity = gain * (waypoint - position), capped at `vmax`.
       2. Force = k_vel * (desired velocity - current velocity), clipped to [-1, 1].
-    The settings below were tuned by grid search: 100% success over 150 random start/goal pairs
-    in PointMaze Medium, with room left to go slower or faster (useful for 'speed error' datasets).
+    The default settings came from a grid search: 100% success over 150 random start and goal pairs
+    in PointMaze Medium, with room left to drive slower or faster for the speed error datasets.
     """
 
     def __init__(self, env, gain: float = 3.0, vmax: float = 2.0, radius: float = 0.5, k_vel: float = 8.0):
@@ -81,15 +81,15 @@ class ExpertDriver:
         self.gain, self.vmax, self.radius, self.k_vel = gain, vmax, radius, k_vel
 
     def plan(self, pos, goal_xy):
-        """Call once after env.reset(): compute the cell path from where we are to the goal."""
+        """Call once after env.reset(): computes the cell path from the current position to the goal."""
         self.goal_xy = np.asarray(goal_xy, dtype=float)
         self.path = bfs_path(self.env, xy_to_cell(self.env, pos), xy_to_cell(self.env, goal_xy))
         self.idx = 0
 
     def act(self, obs: np.ndarray) -> np.ndarray:
-        """obs = [x, y, vx, vy]  ->  action = [fx, fy]"""
+        """Maps obs = [x, y, vx, vy] to action = [fx, fy]."""
         pos, vel = obs[:2], obs[2:4]
-        # move on to the next waypoint once we are close enough to the current one
+        # switch to the next waypoint once the ball is close enough to the current one
         while self.idx < len(self.path) - 1 and np.linalg.norm(cell_to_xy(self.env, self.path[self.idx]) - pos) < self.radius:
             self.idx += 1
         target = self.goal_xy if self.idx >= len(self.path) - 1 else cell_to_xy(self.env, self.path[self.idx])

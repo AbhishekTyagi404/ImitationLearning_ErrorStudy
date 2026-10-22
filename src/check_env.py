@@ -1,7 +1,7 @@
-"""BRICK 1: does my install work?  Run:  python src/check_env.py
+"""Environment check.  Run:  python src/check_env.py
 
-Prints what the robot sees and does, then lets the expert driver make one trip.
-If the last line says ALL GOOD, Brick 1 is done.
+Prints the observation space, the action space and the maze layout, then lets the
+expert driver make one trip. The last line reads ALL GOOD when the install works.
 """
 import numpy as np
 

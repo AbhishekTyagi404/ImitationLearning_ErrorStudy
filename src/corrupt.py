@@ -1,26 +1,26 @@
-"""BRICK 5: the mistake makers. Re-record the expert trips, but let a flawed driver make some of them.
+"""Corrupted demonstrations: replay the expert trips and let a flawed driver make some of them.
 
 Run:  python src/corrupt.py --error wrong_left
-      python src/corrupt.py --error all          (every error type this file knows)
+      python src/corrupt.py --error all          (every error type in this file)
 
-How a corrupted dataset is built (the same recipe for every error type, so they compare fairly):
+Every corrupted dataset follows the same recipe, so the error types compare fairly:
   1. Replay exactly the same 500 trips as data/expert_clean.npz (same start, goal and reset seed).
   2. A fixed 20% of those trips (100 trips, the SAME 100 for every error type) are driven by a flawed driver.
-  3. The other 80% are driven by the normal expert, so they are identical to the clean data.
-Because the flawed driver really drives the ball, every state matches the action that led to it.
-(Editing action numbers inside the finished clean file would break that link.)
+  3. The other 80% are driven by the normal expert and match the clean data exactly.
+The flawed driver really drives the ball, so every recorded state is the result of the action before it.
+Editing action numbers inside the finished clean file would break that link.
 
-Error types in this file (Brick 5). Brick 6 adds delayed turn, obstacle mistake, missing recovery.
-  wrong_left   once per trip, at a junction where a side corridor opens to the LEFT, the driver drives into it
-               for `detour` steps, then realizes and re-plans from wherever it ended up.
+Error types:
+  wrong_left   once per trip, at a junction where a side corridor opens to the LEFT, the driver turns into it
+               for `detour` steps, then plans a new path from wherever it ended up.
   wrong_right  the same, to the RIGHT.
-  speed_fast   the driver's speed cap is 1.5x the expert's (3.0 instead of 2.0): overshoots corners.
+  speed_fast   the speed cap is 1.5x the expert's (3.0 instead of 2.0), so the ball overshoots corners.
   speed_slow   the speed cap is 0.5x (1.0): slow, overly careful driving.
+Delayed turn, obstacle mistake and missing recovery come next.
 
 Writes, for each error type:
   data/<error>.npz / .csv       same columns as the clean data, plus 'corrupted' (1 for the flawed trips)
-  figures/corrupt_<error>.png   4 corrupted trips drawn over their clean versions (the Brick 5 check:
-                                if you cannot see the difference, the mistake is too weak to matter)
+  figures/corrupt_<error>.png   4 corrupted trips drawn over their clean versions
 """
 import argparse
 from pathlib import Path
@@ -34,9 +34,8 @@ CORRUPT_FRACTION = 0.2
 CORRUPT_SEED = 7          # picks WHICH trips get corrupted; keep fixed so every error type uses the same trips
 
 
-# ---------------------------------------------------------------- the flawed drivers
 class SteeringMixin:
-    """The expert's two-layer controller, with the speed cap as a parameter."""
+    """The expert's two layer controller, with the speed cap as a parameter."""
 
     def steer(self, target, pos, vel, vmax):
         v_des = self.gain * (target - pos)
@@ -67,12 +66,12 @@ class SpeedErrorDriver(SteeringMixin, ExpertDriver):
 
 
 class WrongTurnDriver(SteeringMixin, ExpertDriver):
-    """Takes ONE wrong turn per trip into a side corridor on the given side, then re-plans.
+    """Takes ONE wrong turn per trip into a side corridor on the given side, then plans again.
 
-    At plan time we list every junction on the route where the cell to the left (or right) of the travel
-    direction is open floor, and pick one of them at random. When the driver reaches that junction it heads
-    into the side cell for `detour` steps instead of continuing, then plans a new shortest path from where
-    it is. If the route has no such junction, the trip stays clean (counted in the printout).
+    At plan time the driver lists every junction on the route where the cell to the left (or right) of the
+    travel direction is open floor, and picks one of them at random. On reaching that junction it heads into
+    the side cell for `detour` steps instead of continuing, then plans a new shortest path from where it is.
+    A route with no such junction stays clean; the printout counts those trips.
     """
 
     def __init__(self, env, rng, side, detour=25):
@@ -126,7 +125,6 @@ ERRORS = {
 }
 
 
-# ---------------------------------------------------------------- re-recording the trips
 def corrupted_trips(n_episodes):
     rng = np.random.default_rng(CORRUPT_SEED)
     return set(rng.choice(n_episodes, int(round(CORRUPT_FRACTION * n_episodes)), replace=False).tolist())
@@ -136,7 +134,7 @@ def collect(error, n_episodes, seed):
     """Same draws as make_expert_data.collect(), so trip i here is trip i of the clean data."""
     env = make_env()
     cells = free_cells(env)
-    rng = np.random.default_rng(seed)               # start/goal draws: identical to the clean data
+    rng = np.random.default_rng(seed)               # start and goal draws, identical to the clean data
     flaw_rng = np.random.default_rng(seed + 1000)   # the flawed driver's own random choices
     bad = corrupted_trips(n_episodes)
     expert, flawed = ExpertDriver(env), ERRORS[error](env, flaw_rng)
@@ -184,7 +182,6 @@ def save(env, d, out):
     }).to_csv(out.with_suffix(".csv"), index=False)
 
 
-# ---------------------------------------------------------------- the Brick 5 check: clean vs corrupted
 def plot_compare(error, data, clean_path, out, n=4):
     import matplotlib
     matplotlib.use("Agg")

@@ -1,14 +1,14 @@
-"""BRICK 1-2: create the clean 'expert demonstrations' (the bronze table of the project).
+"""Generate the clean expert demonstrations.
 
 Run:  python src/make_expert_data.py --episodes 500
 
-Writes two files you can use:
-  data/expert_clean.npz   fast format used by the training code
-  data/expert_clean.csv   one row per step, so you can explore it with SQL / pandas / DuckDB
+Writes:
+  data/expert_clean.npz   compressed arrays used by the training code
+  data/expert_clean.csv   one row per step, for inspection with pandas
 
 Each row is one step of one trip:
   episode, step, x, y, vx, vy, goal_x, goal_y, fx, fy
-  (state = x, y, vx, vy and the goal; action = fx, fy = the push the expert applied)
+  The state is x, y, vx, vy plus the goal; the action fx, fy is the push the expert applied.
 """
 import argparse
 from pathlib import Path
@@ -28,7 +28,7 @@ def collect(n_episodes: int, seed: int):
     kept = attempted = 0
     while kept < n_episodes:
         attempted += 1
-        # random start cell and random, different goal cell -> diverse trips
+        # random start cell and a different random goal cell
         s, g = rng.choice(len(cells), 2, replace=False)
         obs, _ = env.reset(seed=int(rng.integers(1_000_000_000)),
                            options={"reset_cell": np.array(cells[s]), "goal_cell": np.array(cells[g])})
@@ -43,7 +43,7 @@ def collect(n_episodes: int, seed: int):
             obs, _, terminated, truncated, info = env.step(a)
             if terminated or truncated:
                 break
-        if not info["success"]:          # keep only perfect trips: this is the "expert" data
+        if not info["success"]:          # keep only successful trips in the expert data
             continue
         for t in range(len(ep["obs"])):
             rows["episode"].append(kept)

@@ -1,7 +1,7 @@
-"""BRICK 2: look at the data.  Run:  python src/plot_trajectories.py
+"""Plot expert trips on the maze.  Run:  python src/plot_trajectories.py
 
-Draws a few expert trips on top of the maze so you can see what 'good driving' looks like.
-Later you will use the same function to compare clean vs corrupted trips.
+Draws a few expert trips over the maze walls, next to their speed over time.
+corrupt.py reuses draw_maze to compare clean and corrupted trips.
 """
 import argparse
 from pathlib import Path
@@ -50,7 +50,7 @@ def main():
     plot_episodes(axes[0], data, episodes)
     axes[0].set_title(f"{len(episodes)} expert trips (circle = start, star = goal)")
 
-    # Speed over time for the same trips: this is where 'speed errors' will show up later
+    # speed over time for the same trips
     for i, e in enumerate(episodes):
         m = data["episode"] == e
         speed = np.linalg.norm(data["obs"][m][:, 2:4], axis=1)

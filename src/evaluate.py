@@ -1,28 +1,28 @@
-"""BRICK 4: evaluation harness. Let each trained policy drive the same fixed test trips and score it.
+"""Evaluation: each trained policy drives the same fixed test trips and gets four scores.
 
 Run:  python src/evaluate.py                         (every model in models/, 200 test trips)
       python src/evaluate.py --models "models/expert_clean_seed*.pt"
-      python src/evaluate.py --expert                (also save the expert driver's own row, as the upper bound)
+      python src/evaluate.py --expert                (adds a row for the expert driver as the upper bound)
       python src/evaluate.py --trips 300
 
-The four metrics (same definitions as the roadmap):
-  success_rate     share of test trips that reach the goal before the step limit (600 steps)
-  collision_rate   share of test trips with at least one step where the ball touches a wall
-                   (MuJoCo contact between 'particle_geom' and a geom named 'block_...' with distance <= 0;
-                   MuJoCo also reports 'near' contacts inside a 2 mm safety margin, those are ignored)
-  path_efficiency  distance the expert travels on the same trip / distance the policy travelled
-                   (successful trips only). The expert scores exactly 1.0; lower = longer, wobblier route.
-  time_to_goal     steps until success                                            (successful trips only)
+Metrics:
+  success_rate     share of test trips that reach the goal within the step limit (600 steps)
+  collision_rate   share of test trips with at least one step where the ball touches a wall: a MuJoCo
+                   contact between 'particle_geom' and a geom named 'block_...' with distance <= 0.
+                   Near contacts inside MuJoCo's 2 mm safety margin are ignored.
+  path_efficiency  distance the expert travels on the same trip / distance the policy travelled,
+                   on successful trips only. The expert scores exactly 1.0; lower means a longer route.
+  time_to_goal     steps until success, on successful trips only
 
-The expert driver is run on the same trips every time (about 5 s) to get its reference distances.
+The expert driver runs the same trips first (about 5 s) to provide the reference distances.
 
 Writes:
-  results/results.csv            one row per (model, number of trips). Re-running a model replaces its row,
-                                 so the file never has duplicates. This is the "gold" table of the project.
-  results/trips/<model>.csv      one row per test trip (start, goal, success, collisions, where it ended ...).
-                                 Not needed for the midterm; it is the raw material for Brick 8 (diagnostic).
+  results/results.csv            one row per (model, number of trips). Running a model again replaces
+                                 its row, so the file never holds duplicates.
+  results/trips/<model>.csv      one row per test trip: start, goal, success, collisions, end point and
+                                 first wall contact. These are the features for the error type classifier.
 
-Check that Brick 4 is done: run the same command twice, the numbers must be identical.
+Running the same command twice gives identical numbers.
 """
 import argparse
 import glob
@@ -43,9 +43,8 @@ RESULTS = Path("results/results.csv")
 TRIPS_DIR = Path("results/trips")
 
 
-# ---------------------------------------------------------------- wall contact detection
 class WallContact:
-    """Answers one question after every step: is the ball touching a wall right now?"""
+    """Checks after every step whether the ball is touching a wall."""
 
     def __init__(self, env):
         pe = env.unwrapped.point_env
@@ -66,9 +65,8 @@ class WallContact:
         return False
 
 
-# ---------------------------------------------------------------- one full evaluation
 def evaluate(drive, n_trips, make_driver=None):
-    """drive(obs_dict) -> action.  make_driver: optional callback run after each reset (used by the expert)."""
+    """drive(obs_dict) returns an action. make_driver is an optional callback run after each reset, used for the expert."""
     env = make_env()
     walls = WallContact(env)
     trips = []
@@ -125,9 +123,8 @@ def summarize(trips):
     )
 
 
-# ---------------------------------------------------------------- helpers for model files
 def parse_name(stem):
-    """'expert_clean_seed1' -> ('expert_clean', 1)"""
+    """Turns 'expert_clean_seed1' into ('expert_clean', 1)."""
     m = re.match(r"(.+)_seed(\d+)$", stem)
     return (m.group(1), int(m.group(2))) if m else (stem, -1)
 
@@ -154,7 +151,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", default="models/*.pt", help="file pattern of the models to score")
     parser.add_argument("--trips", type=int, default=200, help="number of fixed test trips (use 200 or more)")
-    parser.add_argument("--expert", action="store_true", help="also score the expert driver (upper bound)")
+    parser.add_argument("--expert", action="store_true", help="score the expert driver as well (upper bound)")
     args = parser.parse_args()
 
     torch.set_num_threads(2)
@@ -191,7 +188,7 @@ def main():
         print(f"{name:28s} success {s['success_rate']:6.1%}   collisions {s['collision_rate']:6.1%}   "
               f"efficiency {s['path_efficiency']:.3f}   time {s['time_to_goal']:5.1f} steps   ({secs:.0f} s)")
 
-    # one line per dataset: mean and spread across seeds (what goes into the report)
+    # one line per dataset: mean and spread across seeds
     df = pd.read_csv(RESULTS)
     df = df[df.n_trips == args.trips]
     cols = ["success_rate", "collision_rate", "path_efficiency", "time_to_goal"]
@@ -199,7 +196,7 @@ def main():
     table.insert(0, "seeds", df.groupby("dataset").size())
     print(f"\nSummary by dataset ({args.trips} trips, mean and std across seeds):")
     print(table.to_string())
-    print(f"\nSaved {RESULTS} and per-trip details in {TRIPS_DIR}/")
+    print(f"\nSaved {RESULTS} and the trip details in {TRIPS_DIR}/")
 
 
 if __name__ == "__main__":

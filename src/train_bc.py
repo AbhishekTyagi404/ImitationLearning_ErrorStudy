@@ -1,16 +1,16 @@
-"""BRICK 3: train a behavior-cloning (BC) policy and give it a quick driving test.
+"""Train a behavior cloning (BC) policy and run a quick driving test.
 
 Run:  python src/train_bc.py                                   (clean data, seed 0)
       python src/train_bc.py --data data/expert_clean.npz --seed 1
 
-Behavior cloning = plain supervised learning: input the state, predict the expert's push.
+Behavior cloning is supervised regression from the state to the expert's push:
   input  (6 numbers): x, y, vx, vy, goal_x, goal_y
   output (2 numbers): fx, fy in [-1, 1]
 
 Writes:
-  models/<data name>_seed<N>.pt   the trained network plus its input scaling
-Prints the success rate on a FIXED set of test trips (same trips for every policy, so results compare).
-The full evaluation with all four metrics comes in Brick 4 (src/evaluate.py).
+  models/<data name>_seed<N>.pt   the trained network and its input scaling
+Prints the success rate on a fixed set of test trips, the same trips for every policy.
+src/evaluate.py computes all four metrics.
 """
 import argparse
 import time
@@ -22,12 +22,11 @@ import torch.nn as nn
 
 from common import MAX_STEPS, free_cells, make_env
 
-TEST_SEED = 12345  # fixes the test start/goal pairs; never change it between experiments
+TEST_SEED = 12345  # fixes the test start and goal pairs; keep it constant across experiments
 
 
-# ---------------------------------------------------------------- the network
 class BCPolicy(nn.Module):
-    """MLP 6 -> 128 -> 128 -> 2. Tanh at the end keeps the push inside [-1, 1]."""
+    """MLP with layer sizes 6, 128, 128, 2. The final tanh keeps the push inside [-1, 1]."""
 
     def __init__(self, in_dim=6, hidden=128, out_dim=2):
         super().__init__()
@@ -56,7 +55,6 @@ def load_dataset(path):
     return X, Y, len(np.unique(d["episode"]))
 
 
-# ---------------------------------------------------------------- training
 def train(X, Y, seed, epochs=120, batch=256, lr=1e-3):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -84,7 +82,6 @@ def train(X, Y, seed, epochs=120, batch=256, lr=1e-3):
     return policy
 
 
-# ---------------------------------------------------------------- quick driving test
 def test_pairs(env, n):
     """The fixed list of (start cell, goal cell) test trips."""
     cells = free_cells(env)
