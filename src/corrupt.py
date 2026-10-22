@@ -22,8 +22,19 @@ Error types:
                once per trip the ball is pushed off its route for 25 steps. The slip is recorded,
                but the steps that steer back onto the route are left out of the data.
 
+Exposure: every flawed driver sets `active` on the steps where it is doing the wrong thing. This is only
+read and counted; it never changes an action, a plan or a random draw, so the datasets stay the same.
+  wrong_left, wrong_right   the detour steps
+  delayed_turn              the straight steps after each corner
+  speed_fast, speed_slow    steps where the wrong speed cap changes the command (the desired speed is above
+                            the lower of the two caps)
+  wall_hugging              steps aimed at a shifted point instead of the cell center
+  missing_recovery          the push steps (the recovery steps left out of the data are counted on their own)
+
 Writes, for each error type:
   data/<error>.npz / .csv       same columns as the clean data, plus 'corrupted' (1 for the flawed trips)
+                                and 'error_active' (1 on steps where the error was active)
+  data/exposure.csv             one row per error type: affected trips, error events, active steps, lengths
   figures/corrupt_<error>.png   4 corrupted trips drawn over their clean versions
 """
 import argparse
@@ -66,6 +77,8 @@ class SpeedErrorDriver(SteeringMixin, ExpertDriver):
         while self.idx < len(self.path) - 1 and np.linalg.norm(cell_to_xy(self.env, self.path[self.idx]) - pos) < self.radius:
             self.idx += 1
         target = self.goal_xy if self.idx >= len(self.path) - 1 else cell_to_xy(self.env, self.path[self.idx])
+        wanted = np.linalg.norm(self.gain * (target - pos))
+        self.active = wanted > min(self.vmax, self.vmax * self.factor)   # the two caps give different commands
         return self.steer(target, pos, vel, self.vmax * self.factor)
 
 
@@ -99,7 +112,9 @@ class WrongTurnDriver(SteeringMixin, ExpertDriver):
 
     def act(self, obs):
         pos, vel = obs[:2], obs[2:4]
+        self.active = False
         if self.steps_left > 0:                       # currently driving down the wrong corridor
+            self.active = True
             self.steps_left -= 1
             action = self.steer(self.detour_xy, pos, vel, self.vmax)
             if self.steps_left == 0:                  # notice the mistake: new shortest path from here
@@ -115,6 +130,7 @@ class WrongTurnDriver(SteeringMixin, ExpertDriver):
             self.detour_xy = cell_to_xy(self.env, wrong)
             self.steps_left = self.detour - 1
             self.events += 1
+            self.active = True
             return self.steer(self.detour_xy, pos, vel, self.vmax)
 
         target = self.goal_xy if self.idx >= len(self.path) - 1 else cell_to_xy(self.env, self.path[self.idx])
@@ -146,7 +162,9 @@ class DelayedTurnDriver(SteeringMixin, ExpertDriver):
 
     def act(self, obs):
         pos, vel = obs[:2], obs[2:4]
+        self.active = False
         if self.steps_left > 0:                       # still going straight past the corner
+            self.active = True
             self.steps_left -= 1
             return self.steer(pos + self.straight, pos, vel, self.vmax)
 
@@ -159,6 +177,7 @@ class DelayedTurnDriver(SteeringMixin, ExpertDriver):
                 self.straight = self.heading(k)
                 self.steps_left = self.delay - 1
                 self.events += 1
+                self.active = True
                 return self.steer(pos + self.straight, pos, vel, self.vmax)
 
         target = self.goal_xy if self.idx >= len(self.path) - 1 else cell_to_xy(self.env, self.path[self.idx])
@@ -202,6 +221,7 @@ class WallHuggingDriver(SteeringMixin, ExpertDriver):
         while self.idx < len(self.path) - 1 and np.linalg.norm(cell_to_xy(self.env, self.path[self.idx]) - pos) < self.radius:
             self.idx += 1
         target = self.goal_xy if self.idx >= len(self.path) - 1 else self.targets[self.idx]
+        self.active = self.idx < len(self.path) - 1 and not np.allclose(target, cell_to_xy(self.env, self.path[self.idx]))
         return self.steer(target, pos, vel, self.vmax)
 
 
@@ -241,9 +261,11 @@ class MissingRecoveryDriver(SteeringMixin, ExpertDriver):
     def act(self, obs):
         pos, vel = obs[:2], obs[2:4]
         self.t += 1
+        self.active = False
         if self.state == "before" and self.t >= self.slip_at:
             self.state, self.push_left, self.events = "slip", self.push, 1
         if self.state == "slip":
+            self.active = True
             self.push_left -= 1
             if self.push_left == 0:                   # slip over: plan from here, stop recording
                 ExpertDriver.plan(self, pos, self.goal_xy)
@@ -284,8 +306,9 @@ def collect(error, n_episodes, seed):
     bad = corrupted_trips(n_episodes)
     expert, flawed = ExpertDriver(env), ERRORS[error](env, flaw_rng)
 
-    rows = dict(episode=[], step=[], obs=[], goal=[], action=[], corrupted=[])
-    stats = dict(flawed=0, with_error=0, failed=0, flawed_steps=0, dropped=0)
+    rows = dict(episode=[], step=[], obs=[], goal=[], action=[], corrupted=[], error_active=[])
+    stats = dict(flawed=0, with_error=0, failed=0, flawed_steps=0, dropped=0, events=0, active_steps=0,
+                 affected_steps=0)
     for trip in range(n_episodes):
         s, g = rng.choice(len(cells), 2, replace=False)
         obs, _ = env.reset(seed=int(rng.integers(1_000_000_000)),
@@ -297,6 +320,7 @@ def collect(error, n_episodes, seed):
         for t in range(MAX_STEPS):
             keep = getattr(driver, "recording", True)    # only MissingRecoveryDriver ever hides rows
             a = driver.act(obs["observation"])
+            active = bool(getattr(driver, "active", False))   # read only: the expert never sets it
             if keep:
                 rows["episode"].append(trip)
                 rows["step"].append(t)
@@ -304,6 +328,8 @@ def collect(error, n_episodes, seed):
                 rows["goal"].append(obs["desired_goal"].copy())
                 rows["action"].append(a)
                 rows["corrupted"].append(int(trip in bad))
+                rows["error_active"].append(int(active))
+                stats["active_steps"] += int(active)
             else:
                 stats["dropped"] += 1
             obs, _, terminated, truncated, info = env.step(a)
@@ -312,7 +338,9 @@ def collect(error, n_episodes, seed):
         if trip in bad:
             stats["flawed"] += 1
             stats["with_error"] += int(driver.events > 0)
+            stats["events"] += driver.events
             stats["flawed_steps"] += len(rows["obs"]) - n0
+            stats["affected_steps"] += (len(rows["obs"]) - n0) if driver.events > 0 else 0
         # A flawed trip that never reaches the goal is still kept: a bad demonstration is the point.
         stats["failed"] += int(not info["success"])
     return env, {k: np.array(v) for k, v in rows.items()}, stats
@@ -321,14 +349,30 @@ def collect(error, n_episodes, seed):
 def save(env, d, out):
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out.with_suffix(".npz"), episode=d["episode"], step=d["step"], obs=d["obs"],
-                        goal=d["goal"], action=d["action"], corrupted=d["corrupted"],
+                        goal=d["goal"], action=d["action"], corrupted=d["corrupted"], error_active=d["error_active"],
                         maze_map=np.array(env.unwrapped.maze.maze_map), env_id=ENV_ID)
     pd.DataFrame({
-        "episode": d["episode"], "step": d["step"], "corrupted": d["corrupted"],
+        "episode": d["episode"], "step": d["step"], "corrupted": d["corrupted"], "error_active": d["error_active"],
         "x": d["obs"][:, 0], "y": d["obs"][:, 1], "vx": d["obs"][:, 2], "vy": d["obs"][:, 3],
         "goal_x": d["goal"][:, 0], "goal_y": d["goal"][:, 1],
         "fx": d["action"][:, 0], "fy": d["action"][:, 1],
     }).to_csv(out.with_suffix(".csv"), index=False)
+
+
+def save_exposure(error, n_rows, st, path=Path("data") / "exposure.csv"):
+    """Adds or replaces this error type's row in the exposure table."""
+    row = dict(error=error, flawed_trips=st["flawed"], affected_trips=st["with_error"], error_events=st["events"],
+               active_steps=st["active_steps"], active_share=round(st["active_steps"] / n_rows, 4),
+               affected_trip_steps=st["affected_steps"], flawed_trip_steps=st["flawed_steps"],
+               dataset_steps=n_rows, dropped_steps=st["dropped"], failed_trips=st["failed"])
+    table = pd.read_csv(path) if path.exists() else pd.DataFrame()
+    if len(table):
+        table = table[table.error != error]
+    order = list(ERRORS)
+    table = pd.concat([table, pd.DataFrame([row])], ignore_index=True)
+    table = table.sort_values("error", key=lambda c: c.map(order.index)).reset_index(drop=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(path, index=False)
 
 
 def with_gaps(steps, values):
@@ -389,12 +433,15 @@ def main():
         env, d, st = collect(error, args.episodes, args.seed)
         out = Path("data") / error
         save(env, d, out)
+        save_exposure(error, len(d["obs"]), st)
         d["maze_map"] = np.array(env.unwrapped.maze.maze_map)
         fig = Path("figures") / f"corrupt_{error}.png"
         plot_compare(error, d, args.clean, fig)
         print(f"{error:12s} {st['flawed']} flawed trips ({st['flawed'] / args.episodes:.0%}), "
               f"{st['with_error']} actually contain the error, {st['failed']} never reached the goal; "
               f"{len(d['obs'])} rows ({st['flawed_steps']} from flawed trips, {st['dropped']} recovery steps left out)")
+        print(f"             {st['events']} error events, {st['active_steps']} steps with the error active "
+              f"({st['active_steps'] / len(d['obs']):.1%} of all rows)")
         print(f"             saved {out.with_suffix('.npz')}, {out.with_suffix('.csv')} and {fig}")
 
 

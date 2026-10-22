@@ -38,13 +38,21 @@ Sorted by the change in collision rate against clean data:
 
 What the numbers show:
 
-* **The delayed turn does the most damage by far.** Wall contact rises from 32% to 62% of trips, and all
-  three seeds land within half a point of each other. It is the only error that lowers every metric:
-  success drops about 5 points, routes get about 9% longer and trips take 18 steps more.
-* **Speed errors, wall hugging and missing recovery all raise the collision rate by 8 to 12 points**
-  while success stays close to clean. The speed error makes the policy drive faster (234 steps instead
-  of 257). Missing recovery has a wide spread between seeds (40% to 54%), so its size is less certain.
-* **Wrong turns leave no trace** on any metric.
+The rule from the experiment plan below applies here: a difference counts as clear only when it is larger
+than about twice the spread between seeds.
+
+* **The delayed turn does the most damage by far.** Wall contact rises from 32% to 62% of trips, a gap
+  about ten times the spread between seeds, and all three seeds land within half a point of each other.
+  It is the only error that is worse on every metric on average: success is about 5 points lower, path
+  efficiency drops from 0.87 to 0.79 and trips take 18 steps more. Of these, only the collision rise and
+  the path efficiency drop pass the rule; the lower success does not yet.
+* **The fast speed error, wall hugging and missing recovery raise the average collision rate by 8 to 12
+  points** while success stays close to clean. With three seeds only the fast speed error just passes the
+  rule. Wall hugging and missing recovery are higher on average but not yet clear, and
+  missing recovery has a wide spread between seeds (40% to 54%). Five seeds should settle these.
+  The fast speed error makes the policy drive faster (234 steps instead of 257).
+* **Wrong turns show no clear effect.** The lower collision rate for wrong left turns (27.7% against
+  32.3%) is smaller than twice the seed spread, so it reads as noise, not as an improvement.
 
 Behavior cloning with a squared error loss learns the average action in each state. An error that pushes
 the actions the same way every time it happens survives that averaging: the delayed turn repeats at every
@@ -53,8 +61,11 @@ per trip at a random junction and points a different way each time, so it averag
 short of the expert (10% failed trips, wall contact on 32% of trips), which is the familiar compounding
 error of behavior cloning.
 
-These are early numbers: three seeds and a single corruption level. Next steps are the combinations of
-errors, a dose response test (20%, 50% and 100% corrupted trips) and five seeds.
+These are early numbers: three seeds and a single corruption level. The same share of trips is corrupted
+for every error type, but not the same amount of wrong behavior (see "How much of each dataset is wrong"
+below), so this table compares the errors as built, not at equal dose. Next steps are five seeds, the
+combinations of errors, a dose response test (20%, 50% and 100% corrupted trips) and a test at matched
+numbers of error steps.
 
 ## Setup (Windows, macOS or Linux)
 
@@ -82,7 +93,7 @@ pip install -r requirements.txt
 python src/check_env.py                       # last line must say ALL GOOD
 python src/make_expert_data.py --episodes 500 # clean data: 500 trips, 106,543 steps
 python src/plot_trajectories.py               # figures/expert_trajectories.png
-python src/corrupt.py --error all             # all seven corrupted datasets + plots
+python src/corrupt.py --error all             # all seven corrupted datasets, plots and data/exposure.csv
 
 # three seeds per dataset, about one minute each on a CPU
 python src/train_bc.py --data data/expert_clean.npz --seed 0
@@ -115,7 +126,7 @@ results/    evaluation tables, not in git
 ```
 
 The corrupted datasets, the other models and the results are not in git. Every script rebuilds them
-exactly from fixed seeds.
+exactly from fixed seeds on the same computer (see the note on computers under Design decisions).
 
 ## The environment and the expert
 
@@ -166,6 +177,34 @@ strength was tuned until the mistake was clearly visible: on flawed trips the ba
 Solid lines are corrupted trips. Dashed lines are the same trips driven by the expert. Gaps in a
 missing recovery line are the steps left out of the data.
 
+### How much of each dataset is wrong
+
+Corrupting the same 100 trips does not give every error type the same amount of wrong behavior. A wrong
+turn is one detour of 25 steps, while a delayed turn repeats at every corner and wall hugging lasts most of
+a trip. Each flawed driver marks the steps where its error is active. This is only counted and never
+changes the data: the datasets are byte identical to the ones built before the counting was added. The
+marks are stored as an `error_active` column in each dataset, and `data/exposure.csv` holds the totals.
+
+| Error | Trips with the error | Error events | Steps with the error active | Share of all training steps | Steps left out |
+| --- | --- | --- | --- | --- | --- |
+| `wrong_left` | 84 | 84 | 2,100 | 1.9% | 0 |
+| `wrong_right` | 89 | 89 | 2,225 | 2.0% | 0 |
+| `missing_recovery` | 96 | 96 | 2,290 | 2.2% | 1,550 |
+| `delayed_turn` | 85 | 236 | 10,617 | 9.2% | 0 |
+| `speed_fast` | 100 | 100 | 12,074 | 11.6% | 0 |
+| `wall_hugging` | 99 | 99 | 17,015 | 15.4% | 0 |
+| `speed_slow` | 100 | 100 | 35,257 | 28.9% | 0 |
+
+What counts as active: the 25 detour steps of a wrong turn, the 45 straight steps after each corner of a
+delayed turn, the steps aimed at a shifted point for wall hugging, the 25 push steps for missing recovery,
+and for speed errors the steps where the wrong speed cap changes the command. For missing recovery the
+1,550 steps left out are counted on their own, since they are missing data, not wrong data.
+
+Two things stand out. The wrong turns carry about five times fewer error steps than the delayed turn, so
+part of the gap between them may come from dose and not from the kind of error. The delayed turn has fewer
+error steps than the fast speed error or wall hugging, yet the largest effect, so step count alone does
+not explain its ranking. A run at matched numbers of error steps will test this directly.
+
 ## Metrics (`src/evaluate.py`)
 
 | Metric | Definition | Measured on |
@@ -191,6 +230,9 @@ Two definitions changed after testing:
 * **Runs:** 11 datasets × 5 seeds = 55 BC policies.
 * **Fairness:** every policy uses the same network and training settings and drives the same 200 test
   trips. A difference counts as real only when it is larger than about twice the spread between seeds.
+* **Test trips:** the 200 test trips are drawn from the same maze cells as the training trips, so most
+  start and goal pairs have been seen in training, with different starting noise. The test measures how
+  well a policy drives this maze, not how it handles a new maze.
 * **Interaction test:** for errors A and B,
   `interaction = (S_clean − S_AB) − [(S_clean − S_A) + (S_clean − S_B)]`.
   A positive value means the pair hurts more than the two errors added together.
@@ -204,7 +246,9 @@ Two definitions changed after testing:
   [−1, 1]. Inputs are scaled by the mean and standard deviation of the training data, stored inside the
   model file. MSE loss, Adam (learning rate 0.001), batch size 256, 120 epochs.
 * **120 epochs instead of 40.** In early tests 40 epochs gave 81% to 93% across seeds. 120 epochs gives a
-  stronger and steadier baseline, and a weak baseline would blur the damage from each error type.
+  stronger and steadier baseline, and a weak baseline would blur the damage from each error type. This
+  choice was made by looking at clean data success on the same test trips used for the results. It was
+  fixed before any corrupted dataset existed and is the same for every dataset, so it favors no error type.
 * **Numbers can differ by a few points between computers,** from floating point differences between CPUs
   and library builds, even with the same seed and data. All reported numbers come from one machine.
 * **Expert data is generated locally instead of downloaded from Minari.** The project stays standalone,
