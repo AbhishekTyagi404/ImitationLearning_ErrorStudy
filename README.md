@@ -14,8 +14,10 @@ cloning navigation policy the most, and do combinations of mistakes hurt more th
 | Evaluation | Four metrics on 200 fixed test trips | `src/evaluate.py` | done |
 | Corruptions | Wrong left turn, wrong right turn, speed error | `src/corrupt.py` | done |
 | Corruptions | Delayed turn, obstacle mistake (wall hugging), missing recovery | `src/corrupt.py` | done |
-| Combinations | Pairs of errors and a mixed dataset | | next |
-| Diagnosis | Classifier that guesses the error type from rollouts | | planned |
+| Combinations | Three pairs of errors and a mixed dataset | `src/corrupt.py`, `src/run_brick7.py` | done |
+| Dose and amount | 50% and 100% corrupted trips; equal numbers of error steps | `src/corrupt.py`, `src/run_brick7.py` | done |
+| Analysis | Brick 7 tables and figures | `src/analyze_brick7.py` | done |
+| Diagnosis | Classifier that guesses the error type from rollouts | | next |
 
 ## Results so far (October 21, 2026)
 
@@ -68,8 +70,117 @@ trips, wall contact on 29% of trips), which is the familiar compounding error of
 
 These results use a single corruption level. The same share of trips is corrupted for every error type,
 but not the same amount of wrong behavior (see "How much of each dataset is wrong" below), so this table
-compares the errors as built, not at equal dose. Next steps are the combinations of errors, a dose
-response test (20%, 50% and 100% corrupted trips) and a test at matched numbers of error steps.
+compares the errors as built, not at equal dose. The next section tests the dose, equal amounts of wrong
+data and combinations of errors.
+
+## Brick 7 results: dose, matched error steps and pairs (November 22, 2026)
+
+Same setup as above: five seeds per dataset, 200 fixed test trips, mean ± standard deviation across seeds,
+and bold marks a difference from clean BC that passes the rule. All numbers come from the same computer
+as the table above. `python src/analyze_brick7.py` rebuilds every table and figure in this section from
+`results/results.csv` and writes `results/brick7_summary.csv`.
+
+### More corrupted trips: 20%, 50% and 100%
+
+![Dose response](figures/brick7_dose.png)
+
+The flawed trips are nested: the 100 trips of the 20% datasets are inside the 250 trips of the 50%
+datasets, which are inside all 500 trips of the 100% datasets.
+
+| Dataset | Flawed trips | Error steps | Success | Collisions | Change in collisions | Path efficiency | Time to goal (steps) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| clean data | 0 | 0 | 91.0 ± 3.2% | 28.5 ± 7.4% | | 0.887 ± 0.025 | 250 ± 11 |
+| wrong_left | 100 | 2,100 | 91.0 ± 3.4% | 29.2 ± 3.1% | +0.7 | 0.856 ± 0.020 | 262 ± 9 |
+| wrong_left_p50 | 250 | 5,650 | 84.1 ± 4.0% | 32.2 ± 5.9% | +3.7 | 0.823 ± 0.027 | 271 ± 9 |
+| wrong_left_p100 | 500 | 11,425 | **76.2 ± 6.5%** | 28.2 ± 5.6% | -0.3 | 0.804 ± 0.021 | 275 ± 9 |
+| wrong_right | 100 | 2,225 | 88.9 ± 1.6% | 31.2 ± 7.8% | +2.7 | 0.875 ± 0.020 | 258 ± 7 |
+| wrong_right_p50 | 250 | 5,675 | 83.7 ± 4.1% | 29.9 ± 6.1% | +1.4 | 0.842 ± 0.010 | 263 ± 5 |
+| wrong_right_p100 | 500 | 11,425 | 75.6 ± 8.9% | 30.0 ± 6.4% | +1.5 | 0.810 ± 0.014 | 273 ± 17 |
+| speed_fast | 100 | 12,074 | 91.5 ± 2.0% | 37.6 ± 7.5% | +9.1 | 0.897 ± 0.023 | 233 ± 9 |
+| speed_fast_p50 | 250 | 32,643 | 95.8 ± 1.8% | 35.5 ± 6.7% | +7.0 | 0.916 ± 0.018 | 213 ± 3 |
+| speed_fast_p100 | 500 | 65,274 | 97.2 ± 1.3% | 25.1 ± 5.4% | -3.4 | 0.931 ± 0.012 | 194 ± 4 |
+| delayed_turn | 100 | 10,617 | 84.8 ± 4.6% | **61.7 ± 1.9%** | **+33.2** | 0.796 ± 0.021 | 275 ± 7 |
+| delayed_turn_p50 | 250 | 29,116 | 87.6 ± 5.5% | **68.3 ± 6.8%** | **+39.8** | 0.766 ± 0.028 | 286 ± 13 |
+| delayed_turn_p100 | 500 | 60,356 | 88.2 ± 3.0% | **83.1 ± 4.2%** | **+54.6** | 0.671 ± 0.016 | 318 ± 10 |
+| wall_hugging | 100 | 17,015 | 90.6 ± 2.9% | 38.2 ± 5.8% | +9.7 | 0.876 ± 0.014 | 258 ± 8 |
+| wall_hugging_p50 | 250 | 44,984 | 87.2 ± 3.7% | **46.7 ± 5.1%** | **+18.2** | 0.836 ± 0.018 | 270 ± 5 |
+| wall_hugging_p100 | 500 | 91,073 | **78.1 ± 4.3%** | **61.9 ± 5.0%** | **+33.4** | 0.730 ± 0.011 | 310 ± 4 |
+| missing_recovery | 100 | 2,290 | 89.3 ± 1.8% | **44.2 ± 6.0%** | **+15.7** | 0.873 ± 0.018 | 249 ± 2 |
+| missing_recovery_p50 | 250 | 5,818 | **82.9 ± 3.5%** | **59.6 ± 4.4%** | **+31.1** | 0.822 ± 0.031 | 255 ± 9 |
+| missing_recovery_p100 | 500 | 11,331 | **75.0 ± 4.3%** | **67.5 ± 2.3%** | **+39.0** | 0.785 ± 0.017 | 249 ± 6 |
+
+* **The delayed turn, missing recovery and wall hugging all get worse as the share grows.** Wall contact
+  climbs to 83%, 68% and 62% of trips at 100%. Wall hugging passes the rule from 50% on; at 20% its effect
+  was still inside the seed spread.
+* **Wrong turns never raise wall contact, but they lower success.** Success falls from about 90% to about 76% at
+  100% for both turns (the left turn passes the rule). The failed trips run out of time about one cell from
+  the goal after travelling about 10 units: the policy gets lost instead of hitting walls. So the null
+  result for wrong turns at 20% does not hold at higher shares.
+* **Speed too fast helps when it is the only speed in the data.** At 100% it gives the highest success
+  (97%), the shortest trips (194 steps) and the fewest wall contacts (25%). For this maze, a speed cap of
+  3.0 is a valid faster driving style, and it hurts only when mixed with the normal speed of 2.0.
+
+### The same amount of wrong data for every error
+
+![Matched error steps](figures/brick7_matched.png)
+
+At 20%, the wrong turns and missing recovery carry about 2,100 to 2,300 error steps, while the other
+three carry 10,600 to 17,000. Here the delayed turn, speed too fast and wall hugging are cut down to
+about 2,200 error steps each by corrupting only the first 20, 17 and 11 of the usual 100 trips
+(`corrupt.py --trips`).
+
+| Dataset | Flawed trips | Error steps | Success | Collisions | Change in collisions | Path efficiency | Time to goal (steps) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| clean data | 0 | 0 | 91.0 ± 3.2% | 28.5 ± 7.4% | | 0.887 ± 0.025 | 250 ± 11 |
+| wrong_left | 100 | 2,100 | 91.0 ± 3.4% | 29.2 ± 3.1% | +0.7 | 0.856 ± 0.020 | 262 ± 9 |
+| wrong_right | 100 | 2,225 | 88.9 ± 1.6% | 31.2 ± 7.8% | +2.7 | 0.875 ± 0.020 | 258 ± 7 |
+| missing_recovery | 100 | 2,290 | 89.3 ± 1.8% | **44.2 ± 6.0%** | **+15.7** | 0.873 ± 0.018 | 249 ± 2 |
+| delayed_turn_n20 | 20 | 2,205 | 93.6 ± 1.6% | 36.8 ± 4.6% | +8.3 | 0.872 ± 0.005 | 255 ± 4 |
+| speed_fast_n17 | 17 | 2,176 | 91.8 ± 2.8% | 31.3 ± 4.7% | +2.8 | 0.895 ± 0.006 | 244 ± 3 |
+| wall_hugging_n11 | 11 | 2,307 | 90.1 ± 2.8% | 34.7 ± 4.5% | +6.2 | 0.899 ± 0.012 | 245 ± 9 |
+
+* **Missing recovery is the only error that passes the rule at equal amounts.** Per error step it is the
+  most harmful error in the study, about 7 points of wall contact per 1,000 error steps.
+* **Most of the delayed turn's damage came from its amount.** Its effect drops from +33.2 to +8.3 points
+  at the same number of error steps as a wrong turn. It still ranks second, ahead of wall hugging, speed
+  too fast and the two wrong turns, but none of these pass the rule at this amount.
+
+### Pairs of errors and the mixed dataset
+
+![Pairs of errors](figures/brick7_pairs.png)
+
+A pair puts both errors on the same 100 flawed trips, so the corrupted share stays at 20%. The mixed
+dataset gives each of the 100 flawed trips one of the six errors, taken in turn (17, 17, 17, 17, 16 and
+16 trips).
+
+| Dataset | Flawed trips | Error steps | Success | Collisions | Change in collisions | Path efficiency | Time to goal (steps) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| clean data | 0 | 0 | 91.0 ± 3.2% | 28.5 ± 7.4% | | 0.887 ± 0.025 | 250 ± 11 |
+| delayed_turn_and_missing_recovery | 100 | 10,802 | 81.6 ± 5.8% | **63.1 ± 3.3%** | **+34.6** | 0.792 ± 0.027 | 272 ± 8 |
+| delayed_turn_and_wall_hugging | 100 | 25,393 | 89.2 ± 4.0% | **63.5 ± 5.4%** | **+35.0** | 0.798 ± 0.029 | 280 ± 13 |
+| missing_recovery_and_speed_fast | 100 | 12,533 | 90.9 ± 2.5% | **46.3 ± 5.5%** | **+17.8** | 0.855 ± 0.023 | 240 ± 11 |
+| mixed | 100 | 7,102 | 86.1 ± 3.8% | **48.1 ± 3.6%** | **+19.6** | 0.838 ± 0.018 | 261 ± 3 |
+
+The interaction on collision rate is I = m(A+B) − m(A) − m(B) + m(clean): zero when the damages add up,
+above zero when the pair hurts more than its parts together, below zero when it hurts less. The standard
+error combines the seed spreads of the four datasets.
+
+| Pair | Interaction (points) | Standard error |
+| --- | --- | --- |
+| delayed_turn + missing_recovery | −14.3 | 4.6 |
+| delayed_turn + wall_hugging | −7.9 | 4.9 |
+| missing_recovery + speed_fast | −7.0 | 5.9 |
+
+* **No pair makes the damage worse.** All three are below additive. The delayed turn with missing
+  recovery is clearly so: that pair touches a wall on 63% of trips, about the same as the delayed turn
+  alone. Two things push in this direction. Wall contact is a yes or no per trip, so a trip that already
+  hits a wall cannot count twice. The pair packs both errors into the same 100 trips, which leaves fewer
+  error steps (10,802) than the two single datasets hold between them (12,907).
+* **The mixed dataset hurts more than the average single error dataset:** 48.1% wall contact against
+  40.3%, a gap of 7.8 points (standard error 1.9). One possible reading: the dose curves above are
+  steepest at small shares, so six errors on about 17 trips each add up to more damage than one error on
+  100 trips. This is a hypothesis, not yet tested.
+
 
 ## Setup (Windows, macOS or Linux)
 
@@ -110,6 +221,26 @@ python src/train_bc.py --data data/missing_recovery.npz --seed 0
 # then the same commands with --seed 1, 2, 3 and 4
 
 python src/evaluate.py --expert               # scores every model in models/, writes results/results.csv
+```
+
+Brick 7 (dose, matched error steps, pairs and the mixed dataset):
+
+```bash
+python src/corrupt.py --error all --check     # a one part ComboDriver must reproduce each single error dataset
+
+python src/corrupt.py --error delayed_turn+missing_recovery
+python src/corrupt.py --error delayed_turn+wall_hugging
+python src/corrupt.py --error missing_recovery+speed_fast
+python src/corrupt.py --error mixed
+
+python src/corrupt.py --error delayed_turn --trips 20 --no-plot
+python src/corrupt.py --error speed_fast --trips 17 --no-plot
+python src/corrupt.py --error wall_hugging --trips 11 --no-plot
+
+python src/corrupt.py --error wrong_left --fraction 0.5 --no-plot   # and --fraction 1.0, for all six errors
+
+python src/run_brick7.py                      # trains and scores five seeds of every dataset; skips models already scored
+python src/analyze_brick7.py                  # Brick 7 tables and figures
 ```
 
 Running `evaluate.py` again replaces a model's row, so `results/results.csv` never holds duplicates, and
