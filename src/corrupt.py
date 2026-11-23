@@ -281,6 +281,116 @@ class MissingRecoveryDriver(SteeringMixin, ExpertDriver):
         return self.steer(target, pos, vel, self.vmax)
 
 
+class ComboDriver(SteeringMixin, ExpertDriver):
+    """Two or more mistakes on the same trip (Brick 7).
+
+    `parts` is any set of speed_fast, delayed_turn, wall_hugging and missing_recovery. Each part behaves
+    exactly like its single error driver above, with the same settings and the same random draws, so a
+    ComboDriver with one part reproduces that single error dataset step for step (checked in
+    check_combo_matches_single). When parts meet on the same step:
+      the slip of missing_recovery overrides everything else while it lasts, then the route is planned
+      again (and the wall hugging aim points are shifted again for the new route);
+      a delayed turn overrides the normal target while the ball keeps going straight;
+      speed_fast changes the speed cap of every steering command, straight runs included.
+    A step counts as error active when any part is active on it.
+    """
+
+    PARTS = ("speed_fast", "delayed_turn", "wall_hugging", "missing_recovery")
+
+    def __init__(self, env, rng, parts, factor=1.5, delay=45, offset=0.38,
+                 push=25, force=0.5, first=10, last=80, back=0.2):
+        super().__init__(env)
+        unknown = set(parts) - set(self.PARTS)
+        if unknown:
+            raise ValueError(f"cannot combine {sorted(unknown)}; choose from {self.PARTS}")
+        self.rng, self.parts = rng, set(parts)
+        self.factor = factor if "speed_fast" in self.parts else 1.0
+        self.delay, self.offset = delay, offset
+        self.push, self.force, self.first, self.last, self.back = push, force, first, last, back
+        self.grid = np.array(env.unwrapped.maze.maze_map)
+
+    # the single error drivers' helpers, reused as they are
+    heading = DelayedTurnDriver.heading
+    shifted = WallHuggingDriver.shifted
+    off_route = MissingRecoveryDriver.off_route
+
+    def plan(self, pos, goal_xy):
+        ExpertDriver.plan(self, pos, goal_xy)
+        self.steps_left, self.events, self.recording = 0, 0, True
+        if "speed_fast" in self.parts:
+            self.events += 1                         # the whole trip is driven at the wrong speed
+        if "wall_hugging" in self.parts:
+            self.side = self.rng.choice(["left", "right"])
+            self.targets = [self.shifted(k) for k in range(len(self.path))]
+            self.events += int(any(not np.allclose(t, cell_to_xy(self.env, c))
+                                   for t, c in zip(self.targets, self.path)))
+        if "missing_recovery" in self.parts:
+            self.t = 0
+            self.slip_at = int(self.rng.integers(self.first, self.last))
+            angle = self.rng.uniform(0, 2 * np.pi)
+            self.push_dir = self.force * np.array([np.cos(angle), np.sin(angle)], dtype=np.float32)
+            self.route = [cell_to_xy(self.env, c) for c in self.path] + [np.asarray(goal_xy, dtype=float)]
+            self.state = "before"
+
+    def replan(self, pos):
+        """New shortest route from here, used after a slip."""
+        ExpertDriver.plan(self, pos, self.goal_xy)
+        self.steps_left = 0
+        if "wall_hugging" in self.parts:
+            self.targets = [self.shifted(k) for k in range(len(self.path))]
+
+    def act(self, obs):
+        pos, vel = obs[:2], obs[2:4]
+        vmax = self.vmax * self.factor
+        self.active = False
+
+        if "missing_recovery" in self.parts:
+            self.t += 1
+            if self.state == "before" and self.t >= self.slip_at:
+                self.state, self.push_left = "slip", self.push
+                self.events += 1
+            if self.state == "slip":
+                self.active = True
+                self.push_left -= 1
+                if self.push_left == 0:               # slip over: plan from here, stop recording
+                    self.replan(pos)
+                    self.state, self.recording = "recover", False
+                return self.push_dir.copy()
+            near_goal = np.linalg.norm(pos - self.goal_xy) < 2 * self.radius
+            if self.state == "recover" and (self.off_route(pos) < self.back or near_goal):
+                self.state, self.recording = "after", True
+
+        if "delayed_turn" in self.parts and self.steps_left > 0:   # still going straight past the corner
+            self.active = True
+            self.steps_left -= 1
+            return self.steer(pos + self.straight, pos, vel, vmax)
+
+        old = self.idx
+        while self.idx < len(self.path) - 1 and np.linalg.norm(cell_to_xy(self.env, self.path[self.idx]) - pos) < self.radius:
+            self.idx += 1
+        if "delayed_turn" in self.parts:
+            k = self.idx - 1                          # the waypoint just reached
+            if self.idx > old and k >= 1 and self.idx < len(self.path):
+                if not np.allclose(self.heading(k), self.heading(self.idx)):
+                    self.straight = self.heading(k)
+                    self.steps_left = self.delay - 1
+                    self.events += 1
+                    self.active = True
+                    return self.steer(pos + self.straight, pos, vel, vmax)
+
+        if self.idx >= len(self.path) - 1:
+            target = self.goal_xy
+        elif "wall_hugging" in self.parts:
+            target = self.targets[self.idx]
+            self.active = not np.allclose(target, cell_to_xy(self.env, self.path[self.idx]))
+        else:
+            target = cell_to_xy(self.env, self.path[self.idx])
+        if "speed_fast" in self.parts:
+            wanted = np.linalg.norm(self.gain * (target - pos))
+            self.active = self.active or wanted > min(self.vmax, vmax)
+        return self.steer(target, pos, vel, vmax)
+
+
 ERRORS = {
     "wrong_left": lambda env, rng: WrongTurnDriver(env, rng, "left"),
     "wrong_right": lambda env, rng: WrongTurnDriver(env, rng, "right"),
@@ -291,20 +401,66 @@ ERRORS = {
     "missing_recovery": lambda env, rng: MissingRecoveryDriver(env, rng),
 }
 
+# the six error types of the study (speed_slow is held back: 10 of its trips time out)
+STUDY_ERRORS = ["wrong_left", "wrong_right", "speed_fast", "delayed_turn", "wall_hugging", "missing_recovery"]
 
-def corrupted_trips(n_episodes):
+
+class MixedDriver:
+    """The mixed dataset (Brick 7): each flawed trip gets ONE of the six study errors, taken in turn.
+
+    The k th flawed trip in trip order (see trip_order) uses STUDY_ERRORS[k % 6], so 100 flawed trips
+    give 17 each of the first four types and 16 each of the last two.
+    """
+
+    def __init__(self, env, rng, order):
+        self.drivers = {e: ERRORS[e](env, rng) for e in STUDY_ERRORS}
+        self.kind = {trip: STUDY_ERRORS[k % len(STUDY_ERRORS)] for k, trip in enumerate(order)}
+        self.current = None
+
+    def for_trip(self, trip):
+        self.current = self.drivers[self.kind[trip]]
+        return self.current
+
+
+def make_flawed(error, env, rng, order):
+    """Driver for an error name: a single error, a pair joined with '+', or 'mixed'."""
+    if error == "mixed":
+        return MixedDriver(env, rng, order)
+    if "+" in error:
+        return ComboDriver(env, rng, [p for p in error.split("+") if p])
+    return ERRORS[error](env, rng)
+
+
+def trip_order(n_episodes):
+    """The order in which trips get corrupted as the corruption level rises.
+
+    The first 100 are exactly the 20% set used since Brick 5 (same seed, same draw), so every earlier
+    dataset is unchanged. The rest follow in a fixed random order. Taking the first k trips gives nested
+    sets: the 20% trips are inside the 50% trips, which are inside the 100% trips, and a matched set with
+    fewer trips is a subset of the 20% trips.
+    """
     rng = np.random.default_rng(CORRUPT_SEED)
-    return set(rng.choice(n_episodes, int(round(CORRUPT_FRACTION * n_episodes)), replace=False).tolist())
+    first = rng.choice(n_episodes, int(round(CORRUPT_FRACTION * n_episodes)), replace=False).tolist()
+    rest = sorted(set(range(n_episodes)) - set(first))
+    rest = np.random.default_rng(CORRUPT_SEED + 1).permutation(rest).tolist()
+    return first + rest
 
 
-def collect(error, n_episodes, seed):
+def corrupted_trips(n_episodes, n_bad=None):
+    """The set of flawed trips: the first n_bad trips of trip_order (default: 20% of the trips)."""
+    n_bad = int(round(CORRUPT_FRACTION * n_episodes)) if n_bad is None else n_bad
+    return set(trip_order(n_episodes)[:n_bad])
+
+
+def collect(error, n_episodes, seed, n_bad=None):
     """Same draws as make_expert_data.collect(), so trip i here is trip i of the clean data."""
     env = make_env()
     cells = free_cells(env)
     rng = np.random.default_rng(seed)               # start and goal draws, identical to the clean data
     flaw_rng = np.random.default_rng(seed + 1000)   # the flawed driver's own random choices
-    bad = corrupted_trips(n_episodes)
-    expert, flawed = ExpertDriver(env), ERRORS[error](env, flaw_rng)
+    bad = corrupted_trips(n_episodes, n_bad)
+    expert = ExpertDriver(env)
+    flawed = make_flawed(error, env, flaw_rng, [t for t in trip_order(n_episodes) if t in bad])
 
     rows = dict(episode=[], step=[], obs=[], goal=[], action=[], corrupted=[], error_active=[])
     stats = dict(flawed=0, with_error=0, failed=0, flawed_steps=0, dropped=0, events=0, active_steps=0,
@@ -314,6 +470,8 @@ def collect(error, n_episodes, seed):
         obs, _ = env.reset(seed=int(rng.integers(1_000_000_000)),
                            options={"reset_cell": np.array(cells[s]), "goal_cell": np.array(cells[g])})
         driver = flawed if trip in bad else expert
+        if isinstance(driver, MixedDriver):
+            driver = driver.for_trip(trip)
         driver.plan(obs["observation"][:2], obs["desired_goal"])
 
         n0 = len(rows["obs"])
@@ -370,7 +528,9 @@ def save_exposure(error, n_rows, st, path=Path("data") / "exposure.csv"):
         table = table[table.error != error]
     order = list(ERRORS)
     table = pd.concat([table, pd.DataFrame([row])], ignore_index=True)
-    table = table.sort_values("error", key=lambda c: c.map(order.index)).reset_index(drop=True)
+    # the seven single errors first in their usual order, then the Brick 7 datasets by name
+    rank = lambda name: (order.index(name), "") if name in order else (len(order), name)
+    table = table.iloc[sorted(range(len(table)), key=lambda i: rank(table.error.iloc[i]))].reset_index(drop=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(path, index=False)
 
@@ -421,23 +581,63 @@ def plot_compare(error, data, clean_path, out, n=4):
     plt.close(fig)
 
 
+def check_combo_matches_single(n_episodes=500, seed=0):
+    """A ComboDriver with one part must give exactly the same data as that single error driver."""
+    for part in ComboDriver.PARTS:
+        _, single, _ = collect(part, n_episodes, seed)
+        _, combo, _ = collect(part + "+", n_episodes, seed)
+        same = all(np.array_equal(single[k], combo[k]) for k in single)
+        print(f"{part:16s} one part combo equals the single error data: {same}")
+        if not same:
+            raise SystemExit("ComboDriver does not reproduce the single error driver")
+
+
+def dataset_name(error, n_bad, n_episodes):
+    """data/<name>.npz: the plain error name at 20%, then _p50, _p100 for other levels, _n<k> for k trips."""
+    name = error.replace("+", "_and_")
+    default = int(round(CORRUPT_FRACTION * n_episodes))
+    if n_bad is None or n_bad == default:
+        return name
+    pct = 100 * n_bad / n_episodes
+    return f"{name}_p{pct:.0f}" if pct == int(pct) and n_bad > default else f"{name}_n{n_bad}"
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--error", required=True, choices=list(ERRORS) + ["all"])
+    parser.add_argument("--error", required=True,
+                        help="one of " + ", ".join(ERRORS) + "; 'all' for those seven; a pair such as "
+                             "delayed_turn+missing_recovery; or 'mixed' (one of the six study errors per flawed trip)")
+    parser.add_argument("--fraction", type=float, default=None,
+                        help="share of trips to corrupt (default 0.2); the sets are nested, see trip_order")
+    parser.add_argument("--trips", type=int, default=None,
+                        help="number of trips to corrupt, instead of --fraction (used for matched error steps)")
     parser.add_argument("--episodes", type=int, default=500, help="must match the clean data (500)")
     parser.add_argument("--seed", type=int, default=0, help="must match the clean data (0)")
     parser.add_argument("--clean", default="data/expert_clean.npz", help="used only for the comparison plot")
+    parser.add_argument("--no-plot", action="store_true", help="skip the comparison figure")
+    parser.add_argument("--check", action="store_true",
+                        help="only check that a one part ComboDriver reproduces each single error dataset")
     args = parser.parse_args()
 
-    for error in (list(ERRORS) if args.error == "all" else [args.error]):
-        env, d, st = collect(error, args.episodes, args.seed)
-        out = Path("data") / error
+    if args.check:
+        check_combo_matches_single(args.episodes, args.seed)
+        return
+    n_bad = args.trips if args.trips is not None else (
+        None if args.fraction is None else int(round(args.fraction * args.episodes)))
+    errors = list(ERRORS) if args.error == "all" else [args.error]
+    for error in errors:
+        if error not in ERRORS and error != "mixed" and "+" not in error:
+            parser.error(f"unknown error type {error}")
+        env, d, st = collect(error, args.episodes, args.seed, n_bad)
+        name = dataset_name(error, n_bad, args.episodes)
+        out = Path("data") / name
         save(env, d, out)
-        save_exposure(error, len(d["obs"]), st)
+        save_exposure(name, len(d["obs"]), st)
         d["maze_map"] = np.array(env.unwrapped.maze.maze_map)
-        fig = Path("figures") / f"corrupt_{error}.png"
-        plot_compare(error, d, args.clean, fig)
-        print(f"{error:12s} {st['flawed']} flawed trips ({st['flawed'] / args.episodes:.0%}), "
+        fig = Path("figures") / f"corrupt_{name}.png"
+        if not args.no_plot:
+            plot_compare(name, d, args.clean, fig)
+        print(f"{name:12s} {st['flawed']} flawed trips ({st['flawed'] / args.episodes:.0%}), "
               f"{st['with_error']} actually contain the error, {st['failed']} never reached the goal; "
               f"{len(d['obs'])} rows ({st['flawed_steps']} from flawed trips, {st['dropped']} recovery steps left out)")
         print(f"             {st['events']} error events, {st['active_steps']} steps with the error active "
