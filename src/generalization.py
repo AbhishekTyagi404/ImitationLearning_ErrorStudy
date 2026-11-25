@@ -12,6 +12,9 @@ A trip counts as seen when its (start cell, goal cell) pair appears in at least 
 single cell appears in training as both a start and a goal, so an unseen trip is a new route through a
 known maze, not a new maze.
 
+Every dataset's trips are checked against expert_clean_seed0 before scoring, the same check stats_brick9.py
+runs, so a file saved in a different trip order cannot attach the wrong seen or unseen label to a row.
+
 Writes results/generalization.csv and prints the table.
 """
 import argparse
@@ -21,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from common import free_cells, make_env, xy_to_cell
-from stats_brick9 import SEEDS, SINGLE, dataset_list
+from stats_brick9 import KEY, SEEDS, SINGLE, dataset_list
 
 SHOW = ["expert_clean"] + SINGLE + [f"{e}_p100" for e in SINGLE]
 
@@ -35,16 +38,20 @@ def training_pairs(env, path):
 
 def seen_mask(env, trips_dir, train):
     """True for each test trip whose start and goal pair appears in the training trips."""
-    t = pd.read_csv(Path(trips_dir) / "expert_clean_seed0.csv").sort_values("trip")
+    t = pd.read_csv(Path(trips_dir) / "expert_clean_seed0.csv").sort_values("trip").reset_index(drop=True)
     pairs = [((int(r.start_row), int(r.start_col)), (int(r.goal_row), int(r.goal_col))) for r in t.itertuples()]
-    return np.array([p in train for p in pairs]), pairs
+    return np.array([p in train for p in pairs]), pairs, t[KEY].copy()
 
 
-def scores(trips_dir, mask):
+def scores(trips_dir, mask, ref):
+    """ref is the start and goal columns of expert_clean_seed0, in test trip order. Every file read here
+    is checked against it, so a policy whose trips were saved in a different order cannot silently mix
+    the wrong seen and unseen labels onto its rows."""
     rows = []
     for name in dataset_list():
         for seed in range(SEEDS):
-            t = pd.read_csv(Path(trips_dir) / f"{name}_seed{seed}.csv").sort_values("trip")
+            t = pd.read_csv(Path(trips_dir) / f"{name}_seed{seed}.csv").sort_values("trip").reset_index(drop=True)
+            assert len(t) == len(ref) and (t[KEY].values == ref.values).all(), f"trips differ in {name} seed {seed}"
             for group, m in (("seen", mask), ("unseen", ~mask)):
                 rows.append({"dataset": name, "seed": seed, "group": group, "trips": int(m.sum()),
                              "success_rate": t.success.values[m].mean() * 100,
@@ -78,7 +85,7 @@ def main():
     env = make_env()
     cells = free_cells(env)
     train = training_pairs(env, args.clean_data)
-    mask, pairs = seen_mask(env, args.trips, train)
+    mask, pairs, ref = seen_mask(env, args.trips, train)
 
     print(f"Maze: {len(cells)} open cells, {len(cells) * (len(cells) - 1)} ordered start and goal pairs.")
     print(f"Training: 500 trips covering {len(train)} distinct pairs.")
@@ -89,7 +96,7 @@ def main():
     print(f"Test trips whose start cell is new: {sum(1 for a, _ in pairs if a not in starts)}; "
           f"whose goal cell is new: {sum(1 for _, b in pairs if b not in goals)}.\n")
 
-    per_policy = scores(args.trips, mask)
+    per_policy = scores(args.trips, mask, ref)
     Path("results").mkdir(exist_ok=True)
     per_policy.round(2).to_csv("results/generalization.csv", index=False)
     out = summary(per_policy)

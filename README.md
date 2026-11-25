@@ -283,8 +283,10 @@ weakness.
 * **A permutation test** gives the p value. The five clean policies and the five flawed ones are pooled
   and split again in all 252 ways, with the test trips held fixed. The p value is the share of splits
   whose gap is at least as large as the one we saw. This treats the trained policy as the unit, which is
-  the unit the experiment actually varies. For the six single errors at 20% these p values are corrected
-  with Holm's method.
+  the unit the experiment actually varies, and it assumes the ten policies can be freely relabeled against
+  each other. The five seed numbers are shared across every dataset, so this is an assumption rather than
+  a fact about the data; the Limitations section says more. For the six single errors at 20% these p
+  values are corrected with Holm's method.
 * **A paired bootstrap** gives the interval. Each draw picks 200 trip positions once and applies them to
   every dataset, so the trips stay paired, and picks five training seeds with replacement, 10,000 draws
   in all.
@@ -364,7 +366,8 @@ ordered start and goal pairs, and the 500 training trips cover 359 of them. Of t
 use a pair that appears in training and **86 use a pair that never appears**. Every single cell appears
 in training as both a start and a goal, so an unseen trip is a new route through a known maze, not a new
 maze. `src/generalization.py` splits the test trips on that line and scores both halves from the trip
-logs, with nothing retrained.
+logs, with nothing retrained, after checking every policy's trips against the reference order the same
+way `stats_brick9.py` does.
 
 | | Seen pairs (114) | Unseen pairs (86) |
 | --- | --- | --- |
@@ -401,6 +404,11 @@ The full table for all 26 datasets is in `results/generalization.csv`.
 * Five policies against five put a floor of 0.0079 under any permutation p value here, and 0.048 after
   the correction for six errors. Two errors sit at that floor, and nothing in this study can report a
   smaller p value without more training seeds.
+* The permutation test assumes the ten training runs it reshuffles are independent of each other. The
+  five seed numbers are shared across every dataset and set the starting weights and the minibatch order
+  for all of them, so the runs are matched by seed rather than ten unrelated draws. The seed t interval
+  uses that matching directly, and both results marked solid in the Statistics section pass that check
+  too, but the permutation p value by itself rests on the independence assumption.
 * Five training seeds per dataset. Brick 8 has five policies per error type, so one wrong prediction
   moves its score by 3.3 points.
 * Every model is the one after 120 epochs, with no validation split and no checkpoint choice. The epoch
