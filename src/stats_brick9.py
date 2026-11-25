@@ -13,6 +13,7 @@ Writes:
   results/brick9_seed_results.csv     success and collision rate of every policy
   results/brick9_changes.csv          change against clean BC with 95% interval and p value
   results/brick9_interactions.csv     interaction of each pair, per seed and bootstrap, and mixed vs singles
+  figures/brick9_intervals.png        change against clean BC with 95% intervals for the six errors
 """
 import argparse
 from pathlib import Path
@@ -99,16 +100,65 @@ def changes(data, rng, draws):
             seed_idx = rng.integers(0, SEEDS, size=(draws, SEEDS))
             d = (boot_mean(arr, trip_idx, seed_idx) - clean_boot) * 100
             lo, hi = interval(d)
+            per_seed = (arr.mean(1) - clean.mean(1)) * 100          # seed s against seed s of clean BC
+            half = stats.t.ppf(0.975, SEEDS - 1) * per_seed.std(ddof=1) / np.sqrt(SEEDS)
             rows.append({"metric": metric, "dataset": name, "clean_mean": clean.mean() * 100,
                          "dataset_mean": arr.mean() * 100, "change": (arr.mean() - clean.mean()) * 100,
-                         "ci_low": lo, "ci_high": hi, "p_value": p_value(d)})
+                         "ci_low": lo, "ci_high": hi, "p_value": p_value(d),
+                         "seed_ci_low": per_seed.mean() - half, "seed_ci_high": per_seed.mean() + half})
     df = pd.DataFrame(rows)
     df["holm_p_six_errors"] = np.nan
     for metric in METRICS:
         m = (df.metric == metric) & df.dataset.isin(SINGLE)
         df.loc[m, "holm_p_six_errors"] = holm(df.loc[m, "p_value"].values)
     df["interval_excludes_zero"] = (df.ci_low > 0) | (df.ci_high < 0)
+    df["seed_interval_excludes_zero"] = (df.seed_ci_low > 0) | (df.seed_ci_high < 0)
+    df["solid"] = df.interval_excludes_zero & df.seed_interval_excludes_zero      # both intervals exclude zero
     return df
+
+
+LABEL = {"wrong_left": "Wrong left turn", "wrong_right": "Wrong right turn", "speed_fast": "Speed too fast",
+         "delayed_turn": "Delayed turn", "wall_hugging": "Wall hugging", "missing_recovery": "Missing recovery"}
+INK, MUTED, GRID, BLUE, PALE = "#0b0b0b", "#52514e", "#e4e3df", "#2a78d6", "#9dbfe9"
+
+
+def draw_intervals(ch, path):
+    """Change against clean BC with 95% bootstrap intervals: collisions at 20%, success at 100% corrupted trips."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    order = ch[(ch.metric == "collision") & ch.dataset.isin(SINGLE)].sort_values("change").dataset.tolist()
+    panels = (("collision", "", "Change in trips with a wall contact (points)", "Collisions, 20% of trips corrupted"),
+              ("success", "_p100", "Change in trips that reach the goal (points)", "Success, 100% of trips corrupted"))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+    for ax, (metric, suffix, xlabel, title) in zip(axes, panels):
+        for i, e in enumerate(order):
+            r = ch[(ch.metric == metric) & (ch.dataset == e + suffix)].iloc[0]
+            # dark: both intervals exclude zero (and, for collisions at 20%, Holm p below 0.05)
+            solid = bool(r.solid) and (r.holm_p_six_errors < 0.05 if metric == "collision" else True)
+            ax.errorbar(r.change, i, xerr=[[r.change - r.ci_low], [r.ci_high - r.change]], fmt="o", ms=8,
+                        color=BLUE if solid else PALE, capsize=3, mec="white", mew=1.5, lw=2)
+            ax.annotate(f"{r.change:+.1f}", (r.change, i), xytext=(0, 10), textcoords="offset points",
+                        ha="center", fontsize=8.5, color=INK)
+        ax.axvline(0, color=MUTED, lw=1)
+        ax.set_xlabel(xlabel, color=MUTED, fontsize=9)
+        ax.set_title(title, loc="left", color=INK, fontsize=11)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(MUTED)
+        ax.tick_params(colors=MUTED, labelsize=9)
+        ax.grid(axis="x", color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+    axes[0].set_yticks(range(len(order)))
+    axes[0].set_yticklabels([LABEL[e] for e in order], fontsize=9.5, color=INK)
+    fig.suptitle("Change against clean BC with 95% bootstrap intervals (five seeds, same 200 test trips)",
+                 x=0.01, ha="left", color=MUTED, fontsize=9)
+    fig.text(0.99, 0.01, "dark dot: bootstrap and seed intervals both exclude zero (collisions also need Holm p < 0.05)",
+             ha="right", va="bottom", fontsize=8, color=MUTED)
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(path, dpi=200, facecolor="white")
+    plt.close(fig)
 
 
 def per_seed_interaction(a, b, ab, clean):
@@ -168,6 +218,8 @@ def main():
     ch.round(4).to_csv("results/brick9_changes.csv", index=False)
     ix = interactions(data, rng, args.draws)
     ix.round(3).to_csv("results/brick9_interactions.csv", index=False)
+    Path("figures").mkdir(exist_ok=True)
+    draw_intervals(ch, "figures/brick9_intervals.png")
 
     pd.set_option("display.width", 220)
     print(f"Clean BC: success {data['success']['expert_clean'].mean() * 100:.1f}%, "

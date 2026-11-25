@@ -249,6 +249,11 @@ at 20%, p values are corrected with Holm's method. As a second check, each chang
 (seed s of a dataset against seed s of clean BC) and given a t interval over the five seeds. A result
 counts as solid when both intervals exclude zero.
 
+![Change against clean BC with 95% intervals](figures/brick9_intervals.png)
+
+Dark dots mark results where the bootstrap interval and the seed interval both exclude zero; for collisions
+the Holm corrected p value must be below 0.05 too.
+
 | Error at 20% | Collision change | Bootstrap interval | Seed interval | Holm p |
 | --- | --- | --- | --- | --- |
 | Delayed turn | +33.2 | 25.2 to 41.7 | 23.0 to 43.4 | 0.001 |
@@ -371,7 +376,7 @@ python src/classify_error.py                  # scores, confusion matrices and f
 Brick 9 (statistics, reads `results/trips`, no training, under a minute):
 
 ```bash
-python src/stats_brick9.py                    # intervals, Holm correction, interactions; writes results/brick9_*.csv
+python src/stats_brick9.py                    # intervals, Holm correction, interactions; writes results/brick9_*.csv and figures/brick9_intervals.png
 ```
 
 Running `evaluate.py` again replaces a model's row, so `results/results.csv` never holds duplicates, and
