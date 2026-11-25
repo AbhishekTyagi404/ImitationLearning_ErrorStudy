@@ -17,7 +17,7 @@ cloning navigation policy the most, and do combinations of mistakes hurt more th
 | Combinations | Three pairs of errors and a mixed dataset | `src/corrupt.py`, `src/run_brick7.py` | done |
 | Dose and amount | 50% and 100% corrupted trips; equal numbers of error steps | `src/corrupt.py`, `src/run_brick7.py` | done |
 | Analysis | Brick 7 tables and figures | `src/analyze_brick7.py` | done |
-| Diagnosis | Classifier that guesses the error type from rollouts | | next |
+| Diagnosis | Classifier that guesses the error type from rollouts | `src/classify_error.py` | done |
 
 ## Results so far (October 21, 2026)
 
@@ -181,6 +181,58 @@ error combines the seed spreads of the four datasets.
   steepest at small shares, so six errors on about 17 trips each add up to more damage than one error on
   100 trips. This is a hypothesis, not yet tested.
 
+## Brick 8 results: can the policy's behavior reveal its training error? (November 24, 2026)
+
+Every trained policy drives the same 200 test trips. This step asks whether those trips alone are enough to
+name the mistake in the policy's training data. The classifier never sees the training data, only the
+trip log of the policy (`results/trips/<model>.csv`).
+
+**Method.** Each policy is reduced to eight numbers: success rate, collision rate, share of trips that hit
+the 600 step cap, steps divided by the expert's steps on the same trips, distance per step, path
+efficiency on completed trips, mean distance to the goal at the end of failed trips, and wall contact
+steps per trip that touched a wall. Two small models are compared: logistic regression on standardized
+inputs and a random forest with 300 trees. Scoring leaves one seed out: train on the policies of four
+seeds, predict the fifth, rotate five times. Every policy is predicted by a model that has not seen its
+seed.
+
+![Confusion matrices](figures/brick8_confusion.png)
+
+| Run | Policies | Chance | Logistic regression | Random forest |
+| --- | --- | --- | --- | --- |
+| Six errors at 20% (main result) | 30 | 16.7% | **83.3%** | 56.7% |
+| Same, wrong left and wrong right counted as one class | 30 | | 90.0% | 60.0% |
+| Six errors at 20%, 50% and 100% | 90 | 16.7% | 80.0% | 74.4% |
+| Same, wrong turns counted as one class | 90 | | 90.0% | 90.0% |
+| Clean added as a seventh class (20%) | 35 | 14.3% | 60.0% | 54.3% |
+
+Share of policies named correctly in the main run, logistic regression (5 policies per error):
+
+| Wrong left | Wrong right | Speed too fast | Delayed turn | Wall hugging | Missing recovery |
+| --- | --- | --- | --- | --- | --- |
+| 60% | 80% | 100% | 100% | 60% | 100% |
+
+* **Three errors leave a clear trace.** Speed too fast, delayed turn and missing recovery were named
+  correctly for all 5 policies each in the main run, and for 15 of 15, 14 of 15 and 15 of 15 policies when
+  the doses are pooled.
+* **The two wrong turns look alike.** Wrong left and wrong right are mostly confused with each other
+  (1 of 5 each way in the main run, 9 of 15 and 10 of 15 correct when the doses are pooled). Counting them
+  as one class gives 90%.
+* **Wall hugging sits close to the wrong turns.** 3 of 5 were named correctly, and the two misses were
+  both called wrong right. Its collision rate (38.2%) is close to those of the wrong turns (29.2% and 31.2%).
+* **A clean policy is not recognized as clean.** With clean as a seventh class, only 1 of 5 clean policies
+  was named clean. The classifier says which mistake fits best, not whether there was a mistake. The
+  collision rate of clean BC (28.5%) is already close to the wrong turns.
+* **No single number carries the result.** Dropping the collision rate lowers the main score to 63.3%,
+  dropping the speed to 66.7%, and dropping any one of the other six to between 76.7% and 80.0%.
+* **The simple model wins at this size.** With 30 policies the random forest falls to 56.7%, mostly on the
+  wrong turns and wall hugging. It catches up in the pooled run, which has three times the data.
+* **Not a chance result.** Shuffling the labels 300 times and scoring the same way gave 11.3% on average
+  and 33.3% at best (a separate check, not part of `classify_error.py`).
+
+Limits: five policies per error, so one miss moves a score by 3.3 points; one maze, and the same 200 test
+trips for every policy; and the classifier chooses among the six known errors only, so it says nothing
+about an error type it has not seen.
+
 
 ## Setup (Windows, macOS or Linux)
 
@@ -241,6 +293,12 @@ python src/corrupt.py --error wrong_left --fraction 0.5 --no-plot   # and --frac
 
 python src/run_brick7.py                      # trains and scores five seeds of every dataset; skips models already scored
 python src/analyze_brick7.py                  # Brick 7 tables and figures
+```
+
+Brick 8 (error type classifier, reads `results/trips`, no training, under a minute):
+
+```bash
+python src/classify_error.py                  # scores, confusion matrices and figures/brick8_confusion.png
 ```
 
 Running `evaluate.py` again replaces a model's row, so `results/results.csv` never holds duplicates, and

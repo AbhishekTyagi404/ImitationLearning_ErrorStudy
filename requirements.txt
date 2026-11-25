@@ -4,3 +4,4 @@ torch>=2.2                   # behavior cloning network (runs on CPU; a CUDA bui
 numpy>=1.26
 pandas>=2.0
 matplotlib>=3.8
+scikit-learn>=1.3         # error type classifier (src/classify_error.py)
