@@ -18,6 +18,7 @@ cloning navigation policy the most, and do combinations of mistakes hurt more th
 | Dose and amount | 50% and 100% corrupted trips; equal numbers of error steps | `src/corrupt.py`, `src/run_brick7.py` | done |
 | Analysis | Brick 7 tables and figures | `src/analyze_brick7.py` | done |
 | Diagnosis | Classifier that guesses the error type from rollouts | `src/classify_error.py` | done |
+| Statistics | Paired bootstrap intervals, Holm correction, per seed interactions | `src/stats_brick9.py` | done |
 
 ## Results so far (October 21, 2026)
 
@@ -26,7 +27,8 @@ seeds. In every corrupted dataset, 20% of the 500 training trips contain the err
 same 100 trips for every error type.
 
 Sorted by the change in collision rate against clean data. Bold marks a difference from clean BC that
-passes the rule from the experiment plan below: larger than twice the spread between seeds.
+passes the rule from the experiment plan below: larger than twice the spread between seeds. The rule is a
+quick guide; intervals and corrected p values are in the Statistics section further down.
 
 | Policy | Success | Collisions | Change in collisions | Path efficiency | Time to goal (steps) |
 | --- | --- | --- | --- | --- | --- |
@@ -113,7 +115,7 @@ datasets, which are inside all 500 trips of the 100% datasets.
   climbs to 83%, 68% and 62% of trips at 100%. Wall hugging passes the rule from 50% on; at 20% its effect
   was still inside the seed spread.
 * **Wrong turns never raise wall contact, but they lower success.** Success falls from about 90% to about 76% at
-  100% for both turns (the left turn passes the rule). The failed trips run out of time about one cell from
+  100% for both turns (both pass once intervals are used, see the Statistics section). The failed trips run out of time about one cell from
   the goal after travelling about 10 units: the policy gets lost instead of hitting walls. So the null
   result for wrong turns at 20% does not hold at higher shares.
 * **Speed too fast helps when it is the only speed in the data.** At 100% it gives the highest success
@@ -143,7 +145,8 @@ about 2,200 error steps each by corrupting only the first 20, 17 and 11 of the u
   most harmful error in the study, about 7 points of wall contact per 1,000 error steps.
 * **Most of the delayed turn's damage came from its amount.** Its effect drops from +33.2 to +8.3 points
   at the same number of error steps as a wrong turn. It still ranks second, ahead of wall hugging, speed
-  too fast and the two wrong turns, but none of these pass the rule at this amount.
+  too fast and the two wrong turns, but none of these pass the rule at this amount. With intervals the
+  delayed turn is borderline (see the Statistics section).
 
 ### Pairs of errors and the mixed dataset
 
@@ -163,7 +166,9 @@ dataset gives each of the 100 flawed trips one of the six errors, taken in turn 
 
 The interaction on collision rate is I = m(A+B) − m(A) − m(B) + m(clean): zero when the damages add up,
 above zero when the pair hurts more than its parts together, below zero when it hurts less. The standard
-error combines the seed spreads of the four datasets.
+error combines the seed spreads of the four datasets and treats them as independent, while they share
+seeds and test trips. The Statistics section recomputes the interaction seed by seed and with a bootstrap;
+those intervals are the ones to rely on.
 
 | Pair | Interaction (points) | Standard error |
 | --- | --- | --- |
@@ -171,8 +176,9 @@ error combines the seed spreads of the four datasets.
 | delayed_turn + wall_hugging | −7.9 | 4.9 |
 | missing_recovery + speed_fast | −7.0 | 5.9 |
 
-* **No pair makes the damage worse.** All three are below additive. The delayed turn with missing
-  recovery is clearly so: that pair touches a wall on 63% of trips, about the same as the delayed turn
+* **No pair makes the damage worse.** All three are below additive in these data. The delayed turn with
+  missing recovery is the clearest case (the trip bootstrap excludes zero, the five seeds alone do not):
+  that pair touches a wall on 63% of trips, about the same as the delayed turn
   alone. Two things push in this direction. Wall contact is a yes or no per trip, so a trip that already
   hits a wall cannot count twice. The pair packs both errors into the same 100 trips, which leaves fewer
   error steps (10,802) than the two single datasets hold between them (12,907).
@@ -232,6 +238,67 @@ Share of policies named correctly in the main run, logistic regression (5 polici
 Limits: five policies per error, so one miss moves a score by 3.3 points; one maze, and the same 200 test
 trips for every policy; and the classifier chooses among the six known errors only, so it says nothing
 about an error type it has not seen.
+
+## Statistics: intervals, correction and seed checks (November 24, 2026)
+
+The rule used so far (a difference passes when it is larger than twice the larger seed spread) is a quick
+guide, not a test. This section adds intervals from `src/stats_brick9.py`. Every policy drives the same
+200 test trips, so each bootstrap draw picks 200 trip positions once and applies them to every dataset.
+Each draw picks five training seeds with replacement as well, 10,000 draws in all. For the six single errors
+at 20%, p values are corrected with Holm's method. As a second check, each change is computed seed by seed
+(seed s of a dataset against seed s of clean BC) and given a t interval over the five seeds. A result
+counts as solid when both intervals exclude zero.
+
+| Error at 20% | Collision change | Bootstrap interval | Seed interval | Holm p |
+| --- | --- | --- | --- | --- |
+| Delayed turn | +33.2 | 25.2 to 41.7 | 23.0 to 43.4 | 0.001 |
+| Missing recovery | +15.7 | 6.8 to 25.1 | 3.9 to 27.5 | 0.004 |
+| Wall hugging | +9.7 | 1.0 to 18.9 | 3.6 to 15.8 | 0.123 |
+| Speed too fast | +9.1 | −0.6 to 19.1 | −2.0 to 20.2 | 0.212 |
+| Wrong right turn | +2.7 | −6.9 to 12.8 | −12.5 to 17.9 | 1.000 |
+| Wrong left turn | +0.7 | −7.1 to 9.3 | −10.3 to 11.7 | 1.000 |
+
+* **Delayed turn and missing recovery are solid.** Both intervals exclude zero and the corrected p values
+  are below 0.01.
+* **Wall hugging is suggestive at 20%.** Both intervals exclude zero, but it does not survive the
+  correction for six comparisons. At 50% and 100% it is solid.
+* **Wrong turns and speed too fast show no collision effect at 20%.**
+* **Success at higher shares.** Both wrong turns lose about 15 points at 100% (−14.8 and −15.4), and both
+  intervals exclude zero. Missing recovery loses 8.1 points at 50% and 16.0 at 100%. Wall hugging loses
+  12.9 at 100%. Speed too fast gains 6.2 at 100%. At 50%, wrong left (−6.9) is solid, while wrong right
+  (−7.3) holds only in the bootstrap.
+* **Equal amounts.** Missing recovery stays the one error clearly above zero. Delayed turn cut to 20
+  trips is borderline (bootstrap −0.1 to 17.3, seed interval 2.7 to 13.9).
+
+| Pair | Interaction (points) | Seed interval | Bootstrap interval |
+| --- | --- | --- | --- |
+| delayed_turn + missing_recovery | −14.3 | −30.3 to +1.7 | −27.5 to −3.0 |
+| delayed_turn + wall_hugging | −7.9 | −18.2 to +2.4 | −17.6 to +1.5 |
+| missing_recovery + speed_fast | −7.0 | −21.9 to +7.9 | −19.3 to +4.6 |
+| mixed minus average of the six single errors | +7.8 | +2.0 to +13.5 | +1.8 to +13.5 |
+
+No pair is clearly above additive. The first pair is below additive in the bootstrap but not in the seed
+interval. The mixed dataset is above the average of the singles in both, and all five seeds agree (+1.3
+to +12.5). Only the six single errors at 20% are corrected for multiple comparisons; the dose, matched
+and pair rows show raw intervals. With five seeds the seed part is estimated roughly, and bootstrap
+intervals tend to run a little narrow. `results/brick9_changes.csv`, `results/brick9_interactions.csv` and
+`results/brick9_seed_results.csv` hold every interval and the score of every policy.
+
+## Limitations
+
+* One maze (PointMaze Medium) and one behavior cloning network. The results say nothing about other
+  layouts or other learners.
+* The test trips come from the same maze cells as the training trips, so the test measures how well a
+  policy drives familiar start and goal pairs, not new ones.
+* Five training seeds per dataset. Brick 8 has five policies per error type, so one wrong prediction
+  moves its score by 3.3 points.
+* Every model is the one after 120 epochs, with no validation split and no checkpoint choice. The epoch
+  count was set by looking at clean data success on the test trips (see Design decisions).
+* Only 84 of the 100 flawed wrong left trips and 89 of the 100 wrong right trips contain the mistake, so
+  the effective share of trips with the mistake is a little below the nominal 20%.
+* Established results are the ones marked solid in the Statistics section. The explanation of the mixed
+  dataset (dose curves that are steepest at small shares) and the reading of the wrong turn failures as
+  getting lost are hypotheses.
 
 
 ## Setup (Windows, macOS or Linux)
@@ -299,6 +366,12 @@ Brick 8 (error type classifier, reads `results/trips`, no training, under a minu
 
 ```bash
 python src/classify_error.py                  # scores, confusion matrices and figures/brick8_confusion.png
+```
+
+Brick 9 (statistics, reads `results/trips`, no training, under a minute):
+
+```bash
+python src/stats_brick9.py                    # intervals, Holm correction, interactions; writes results/brick9_*.csv
 ```
 
 Running `evaluate.py` again replaces a model's row, so `results/results.csv` never holds duplicates, and
@@ -428,7 +501,8 @@ Two definitions changed after testing:
   errors, eleven datasets in total.
 * **Runs:** 11 datasets × 5 seeds = 55 BC policies.
 * **Fairness:** every policy uses the same network and training settings and drives the same 200 test
-  trips. A difference counts as real only when it is larger than about twice the spread between seeds.
+  trips. A difference counts as real only when it is larger than about twice the spread between seeds;
+  the Statistics section adds paired bootstrap intervals with Holm correction.
 * **Test trips:** the 200 test trips are drawn from the same maze cells as the training trips, so most
   start and goal pairs have been seen in training, with different starting noise. The test measures how
   well a policy drives this maze, not how it handles a new maze.
