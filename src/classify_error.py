@@ -11,9 +11,11 @@ Runs:
   main    six error types at 20% (30 policies), chance 16.7%
   detect  the same plus clean policies as a seventh class (35 policies), chance 14.3%
   pooled  six error types at 20%, 50% and 100% (90 policies), chance 16.7%
+  dose    hold out a whole dose: train on two doses, test on the third (only seeds the model has not seen)
+  stages  stage 1 of a two stage diagnosis: clean or flawed? (stage 2 is the main run)
 
-Writes results/brick8_features.csv, results/brick8_scores.csv, results/brick8_confusion_*.csv and
-figures/brick8_confusion.png.
+Writes results/brick8_features.csv, results/brick8_scores.csv, results/brick8_confusion_*.csv,
+results/brick8_heldout.csv, results/brick8_stage1.csv and figures/brick8_confusion.png.
 """
 import argparse
 from pathlib import Path
@@ -106,6 +108,35 @@ def run(df, tag, classes):
     return out, mats
 
 
+def heldout_dose(df, name="logistic"):
+    """Train on two doses, test on the third. The test policy's seed is also left out of training, so the
+    model has seen neither that dose nor that seed. Fifteen fits (3 doses x 5 seeds)."""
+    pred = pd.Series(index=df.index, dtype=object)
+    for dose in sorted(df.dose.unique()):
+        for seed in SEEDS:
+            train = df[(df.dose != dose) & (df.seed != seed)]
+            test = df[(df.dose == dose) & (df.seed == seed)]
+            m = models()[name].fit(train[FEATURES], train.error)
+            pred[test.index] = m.predict(test[FEATURES])
+    return pred
+
+
+def stage_one(df, name="logistic"):
+    """Clean or flawed, leave one seed out, classes weighted equally (5 clean against 30 flawed policies)."""
+    y = (df.error != "expert_clean").map({True: "flawed", False: "clean"})
+    pred = pd.Series(index=df.index, dtype=object)
+    for seed in SEEDS:
+        train, test = df[df.seed != seed], df[df.seed == seed]
+        model = models()[name]
+        if name == "logistic":
+            model.set_params(logisticregression__class_weight="balanced")
+        else:
+            model.set_params(class_weight="balanced")
+        model.fit(train[FEATURES], y[train.index])
+        pred[test.index] = model.predict(test[FEATURES])
+    return y, pred
+
+
 def draw(mats, path):
     fig, axes = plt.subplots(1, len(mats), figsize=(5.2 * len(mats), 4.8))
     axes = np.atleast_1d(axes)
@@ -150,6 +181,33 @@ def main():
         if tag in ("main", "pooled"):
             shown[f"{'Six errors at 20%' if tag == 'main' else 'Six errors, all doses'}: logistic regression"] = mats["logistic"]
     pd.DataFrame(scores).round(1).to_csv("results/brick8_scores.csv", index=False)
+
+    held = []
+    for name in models():
+        pred = heldout_dose(pooled_df, name)
+        for dose in sorted(pooled_df.dose.unique()):
+            m = pooled_df.dose == dose
+            held.append({"model": name, "held_out_dose": f"{dose}%", "policies": int(m.sum()),
+                         "accuracy": (pred[m] == pooled_df.error[m]).mean() * 100,
+                         "accuracy_wrong_turns_merged": (merged(pred[m]) == merged(pooled_df.error[m])).mean() * 100})
+        held.append({"model": name, "held_out_dose": "all three", "policies": len(pooled_df),
+                     "accuracy": (pred == pooled_df.error).mean() * 100,
+                     "accuracy_wrong_turns_merged": (merged(pred) == merged(pooled_df.error)).mean() * 100})
+        if name == "logistic":
+            confusion(pooled_df.error, pred, SINGLE).to_csv("results/brick8_confusion_heldout_logistic.csv")
+    held = pd.DataFrame(held)
+    held.round(1).to_csv("results/brick8_heldout.csv", index=False)
+
+    stage = []
+    for name in models():
+        y, pred = stage_one(detect_df, name)
+        stage.append({"model": name, "policies": len(y), "accuracy": (pred == y).mean() * 100,
+                      "clean_found": (pred[y == "clean"] == "clean").mean() * 100,
+                      "flawed_found": (pred[y == "flawed"] == "flawed").mean() * 100,
+                      "balanced_accuracy": ((pred[y == "clean"] == "clean").mean()
+                                            + (pred[y == "flawed"] == "flawed").mean()) * 50})
+    stage = pd.DataFrame(stage)
+    stage.round(1).to_csv("results/brick8_stage1.csv", index=False)
     draw(shown, "figures/brick8_confusion.png")
 
     print(pd.DataFrame(scores)[["run", "model", "policies", "chance", "accuracy",
@@ -159,6 +217,10 @@ def main():
     for tag in ("main", "pooled"):
         print(f"\nConfusion, {tag}, logistic regression (rows true, columns predicted):")
         print(pd.read_csv(f"results/brick8_confusion_{tag}_logistic.csv", index_col=0).to_string())
+    print("\nHold out a whole dose (train on two doses and four seeds, test on the third dose and fifth seed):")
+    print(held.round(1).to_string(index=False))
+    print("\nStage 1, clean or flawed (35 policies at 20%, leave one seed out, classes weighted equally):")
+    print(stage.round(1).to_string(index=False))
     print("\nFeature means at 20% by error:")
     print(main_df.groupby("error")[FEATURES].mean().round(3).to_string())
 

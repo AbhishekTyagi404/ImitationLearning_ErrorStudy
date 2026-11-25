@@ -18,9 +18,13 @@ cloning navigation policy the most, and do combinations of mistakes hurt more th
 | Dose and amount | 50% and 100% corrupted trips; equal numbers of error steps | `src/corrupt.py`, `src/run_brick7.py` | done |
 | Analysis | Brick 7 tables and figures | `src/analyze_brick7.py` | done |
 | Diagnosis | Classifier that guesses the error type from rollouts | `src/classify_error.py` | done |
-| Statistics | Paired bootstrap intervals, Holm correction, per seed interactions | `src/stats_brick9.py` | done |
+| Statistics | Permutation tests, bootstrap intervals, Holm correction, per seed interactions | `src/stats_brick9.py` | done |
+| Generalization | Test trips split into start and goal pairs seen and never seen in training | `src/generalization.py` | done |
 
-## Results so far (October 21, 2026)
+## First results: the six errors at 20% (October 21, 2026)
+
+This was the first full run, and these numbers have not moved since. Later sections add the dose, the
+combinations, the classifier, the statistics and the generalization check.
 
 Five seeds per dataset, 200 fixed test trips (`TEST_SEED = 12345`), mean ± standard deviation across
 seeds. In every corrupted dataset, 20% of the 500 training trips contain the error, and they are the
@@ -235,6 +239,37 @@ Share of policies named correctly in the main run, logistic regression (5 polici
 * **Not a chance result.** Shuffling the labels 300 times and scoring the same way gave 11.3% on average
   and 33.3% at best (a separate check, not part of `classify_error.py`).
 
+**A dose it has never seen.** The pooled run above lets the classifier learn an error from its other
+doses, so it never has to recognize an unfamiliar corruption strength. The harder version trains on two
+doses and tests on the third, with the test policy's seed left out of training as well, so the model has
+seen neither that dose nor that seed.
+
+| Held out dose | Logistic regression | Wrong turns merged | Random forest |
+| --- | --- | --- | --- |
+| 20% | 63.3% | 70.0% | 60.0% |
+| 50% | 90.0% | 96.7% | 80.0% |
+| 100% | 66.7% | 83.3% | 66.7% |
+| All three together | 73.3% | 83.3% | 68.9% |
+
+Chance is 16.7%. The 50% dose is the easy one: it sits between the other two, so the classifier only has
+to interpolate. The 20% and 100% doses sit at the ends and have to be extrapolated to, which costs about
+25 points. Naming the error at a strength never seen in training still works far above chance.
+
+**Clean or flawed, as a first stage.** A two stage diagnosis would ask whether a policy learned from
+flawed data at all, then which mistake. The first stage is the weak one. With 5 clean and 30 flawed
+policies and the two classes weighted equally:
+
+| Model | Clean found | Flawed found | Balanced accuracy |
+| --- | --- | --- | --- |
+| Logistic regression | 3 of 5 | 73.3% | 66.7% |
+| Random forest | 0 of 5 | 93.3% | 46.7% |
+
+Chance for balanced accuracy is 50%. Logistic regression is a little above it and the forest is at it.
+With five clean policies each one moves that column by 20 points, and the random forest row shifts
+between scikit learn builds, while every logistic regression number here was identical on two machines.
+Naming the error among flawed policies is the part that works; deciding whether there was an error at
+all is not yet usable.
+
 Limits: five policies per error, so one miss moves a score by 3.3 points; one maze, and the same 200 test
 trips for every policy; and the classifier chooses among the six known errors only, so it says nothing
 about an error type it has not seen.
@@ -242,31 +277,44 @@ about an error type it has not seen.
 ## Statistics: intervals, correction and seed checks (November 24, 2026)
 
 The rule used so far (a difference passes when it is larger than twice the larger seed spread) is a quick
-guide, not a test. This section adds intervals from `src/stats_brick9.py`. Every policy drives the same
-200 test trips, so each bootstrap draw picks 200 trip positions once and applies them to every dataset.
-Each draw picks five training seeds with replacement as well, 10,000 draws in all. For the six single errors
-at 20%, p values are corrected with Holm's method. As a second check, each change is computed seed by seed
-(seed s of a dataset against seed s of clean BC) and given a t interval over the five seeds. A result
-counts as solid when both intervals exclude zero.
+guide, not a test. `src/stats_brick9.py` measures the same uncertainty three ways, each with its own
+weakness.
+
+* **A permutation test** gives the p value. The five clean policies and the five flawed ones are pooled
+  and split again in all 252 ways, with the test trips held fixed. The p value is the share of splits
+  whose gap is at least as large as the one we saw. This treats the trained policy as the unit, which is
+  the unit the experiment actually varies. For the six single errors at 20% these p values are corrected
+  with Holm's method.
+* **A paired bootstrap** gives the interval. Each draw picks 200 trip positions once and applies them to
+  every dataset, so the trips stay paired, and picks five training seeds with replacement, 10,000 draws
+  in all.
+* **A seed t interval** is the matched check: seed s of a dataset against seed s of clean BC, five
+  differences, a t interval. It uses the shared seed numbers that the bootstrap throws away.
+
+A result counts as solid when the bootstrap interval and the seed interval both exclude zero. Five
+policies against five put a floor under the permutation test: the smallest p value it can give is
+2/252 = 0.0079, so after Holm correction for six errors nothing can fall below 0.048. Two errors reach
+that floor, and more seeds are the only way past it.
 
 ![Change against clean BC with 95% intervals](figures/brick9_intervals.png)
 
 Dark dots mark results where the bootstrap interval and the seed interval both exclude zero; for collisions
 the Holm corrected p value must be below 0.05 too.
 
-| Error at 20% | Collision change | Bootstrap interval | Seed interval | Holm p |
-| --- | --- | --- | --- | --- |
-| Delayed turn | +33.2 | 25.2 to 41.7 | 23.0 to 43.4 | 0.001 |
-| Missing recovery | +15.7 | 6.8 to 25.1 | 3.9 to 27.5 | 0.004 |
-| Wall hugging | +9.7 | 1.0 to 18.9 | 3.6 to 15.8 | 0.123 |
-| Speed too fast | +9.1 | −0.6 to 19.1 | −2.0 to 20.2 | 0.212 |
-| Wrong right turn | +2.7 | −6.9 to 12.8 | −12.5 to 17.9 | 1.000 |
-| Wrong left turn | +0.7 | −7.1 to 9.3 | −10.3 to 11.7 | 1.000 |
+| Error at 20% | Collision change | Bootstrap interval | Seed interval | Permutation p | Holm p |
+| --- | --- | --- | --- | --- | --- |
+| Delayed turn | +33.2 | 25.2 to 41.7 | 23.0 to 43.4 | 0.008 | 0.048 |
+| Missing recovery | +15.7 | 6.8 to 25.1 | 3.9 to 27.5 | 0.008 | 0.048 |
+| Wall hugging | +9.7 | 1.0 to 18.9 | 3.6 to 15.8 | 0.040 | 0.159 |
+| Speed too fast | +9.1 | −0.6 to 19.1 | −2.0 to 20.2 | 0.087 | 0.262 |
+| Wrong right turn | +2.7 | −6.9 to 12.8 | −12.5 to 17.9 | 0.619 | 1.000 |
+| Wrong left turn | +0.7 | −7.1 to 9.3 | −10.3 to 11.7 | 0.905 | 1.000 |
 
-* **Delayed turn and missing recovery are solid.** Both intervals exclude zero and the corrected p values
-  are below 0.01.
-* **Wall hugging is suggestive at 20%.** Both intervals exclude zero, but it does not survive the
-  correction for six comparisons. At 50% and 100% it is solid.
+* **Delayed turn and missing recovery are solid.** Both intervals exclude zero and both reach the floor
+  of the permutation test, 0.048 after correction. No arrangement of these five seeds separates the two
+  groups more sharply than the one we got.
+* **Wall hugging is suggestive at 20%.** Both intervals exclude zero and the raw permutation p value is
+  0.040, which does not survive the correction for six comparisons. At 50% and 100% it is solid.
 * **Wrong turns and speed too fast show no collision effect at 20%.**
 * **Success at higher shares.** Both wrong turns lose about 15 points at 100% (−14.8 and −15.4), and both
   intervals exclude zero. Missing recovery loses 8.1 points at 50% and 16.0 at 100%. Wall hugging loses
@@ -275,12 +323,31 @@ the Holm corrected p value must be below 0.05 too.
 * **Equal amounts.** Missing recovery stays the one error clearly above zero. Delayed turn cut to 20
   trips is borderline (bootstrap −0.1 to 17.3, seed interval 2.7 to 13.9).
 
+**Efficiency counted over all trips.** The path efficiency in the results tables above is measured on
+completed trips only, so a policy that fails its hardest trips can look efficient on the ones that are
+left. The same script measures a second version over all 200 trips, with a failed trip counted as zero.
+Clean BC scores 80.7 on that scale. The change against it:
+
+| Error | At 20% | At 100% |
+| --- | --- | --- |
+| Delayed turn | **−13.2** | −21.6 |
+| Wall hugging | −1.4 | −23.7 |
+| Missing recovery | −2.8 | −21.8 |
+| Wrong right turn | −2.9 | −19.5 |
+| Wrong left turn | −2.9 | −19.4 |
+| Speed too fast | +1.4 | +9.8 |
+
+At 20% the delayed turn is the only error that moves this measure (bold: both intervals exclude zero and
+the corrected p value is 0.048). At 100% every error except speed too fast costs about 20 points, and the
+two wrong turns, which never raise wall contact, lose as much as the rest. Speed too fast gains on both
+measures.
+
 | Pair | Interaction (points) | Seed interval | Bootstrap interval |
 | --- | --- | --- | --- |
-| delayed_turn + missing_recovery | −14.3 | −30.3 to +1.7 | −27.5 to −3.0 |
-| delayed_turn + wall_hugging | −7.9 | −18.2 to +2.4 | −17.6 to +1.5 |
+| delayed_turn + missing_recovery | −14.3 | −30.3 to +1.7 | −27.3 to −2.5 |
+| delayed_turn + wall_hugging | −7.9 | −18.2 to +2.4 | −17.2 to +1.5 |
 | missing_recovery + speed_fast | −7.0 | −21.9 to +7.9 | −19.3 to +4.6 |
-| mixed minus average of the six single errors | +7.8 | +2.0 to +13.5 | +1.8 to +13.5 |
+| mixed minus average of the six single errors | +7.8 | +2.0 to +13.5 | +1.9 to +13.4 |
 
 No pair is clearly above additive. The first pair is below additive in the bootstrap but not in the seed
 interval. The mixed dataset is above the average of the singles in both, and all five seeds agree (+1.3
@@ -289,18 +356,60 @@ and pair rows show raw intervals. With five seeds the seed part is estimated rou
 intervals tend to run a little narrow. `results/brick9_changes.csv`, `results/brick9_interactions.csv` and
 `results/brick9_seed_results.csv` hold every interval and the score of every policy.
 
+## Generalization: routes the training data never contained (November 24, 2026)
+
+The 200 test trips are drawn from the same maze cells as the 500 training trips, so a fair question is
+whether a policy is only repeating routes it was taught. The maze has 26 open cells, which gives 650
+ordered start and goal pairs, and the 500 training trips cover 359 of them. Of the 200 test trips, 114
+use a pair that appears in training and **86 use a pair that never appears**. Every single cell appears
+in training as both a start and a goal, so an unseen trip is a new route through a known maze, not a new
+maze. `src/generalization.py` splits the test trips on that line and scores both halves from the trip
+logs, with nothing retrained.
+
+| | Seen pairs (114) | Unseen pairs (86) |
+| --- | --- | --- |
+| Clean BC, success | 90.9% | 91.2% |
+| Clean BC, wall contact | 27.4% | 30.0% |
+| Delayed turn, change in wall contact | +32.6 | +34.0 |
+| Missing recovery, change in wall contact | +16.5 | +14.7 |
+| Wall hugging, change in wall contact | +11.4 | +7.4 |
+| Speed too fast, change in wall contact | +9.8 | +8.1 |
+| Wrong turns at 100%, change in success | −15.4 and −17.0 | −14.0 and −13.3 |
+| Speed too fast at 100%, change in success | +7.7 | +4.2 |
+| Wall hugging at 100%, change in success | −10.9 | −15.6 |
+| Missing recovery at 100%, change in success | −16.7 | −15.1 |
+
+* **Clean BC drives both halves equally well.** 90.9% against 91.2% success, and 27.4% against 30.0% wall
+  contact. The unseen pairs are no harder than the seen ones, which is what we would expect when the
+  policy has learned to drive the maze rather than to replay routes.
+* **Every ranking holds on the unseen half.** The delayed turn stays by far the worst, missing recovery
+  second. No error changes sign.
+* **The speed too fast benefit at 100% survives.** Success is still above clean BC on pairs the training
+  data never contained, and wall contact is still lower, so the gain is a faster driving style rather
+  than a memorized set of routes.
+
+The full table for all 26 datasets is in `results/generalization.csv`.
+
+
 ## Limitations
 
 * One maze (PointMaze Medium) and one behavior cloning network. The results say nothing about other
   layouts or other learners.
-* The test trips come from the same maze cells as the training trips, so the test measures how well a
-  policy drives familiar start and goal pairs, not new ones.
+* The unseen test trips in the Generalization section are new start and goal pairs inside the same maze.
+  Every cell appears in training as both a start and a goal, so that section tests new routes, not a new
+  layout.
+* Five policies against five put a floor of 0.0079 under any permutation p value here, and 0.048 after
+  the correction for six errors. Two errors sit at that floor, and nothing in this study can report a
+  smaller p value without more training seeds.
 * Five training seeds per dataset. Brick 8 has five policies per error type, so one wrong prediction
   moves its score by 3.3 points.
 * Every model is the one after 120 epochs, with no validation split and no checkpoint choice. The epoch
   count was set by looking at clean data success on the test trips (see Design decisions).
 * Only 84 of the 100 flawed wrong left trips and 89 of the 100 wrong right trips contain the mistake, so
   the effective share of trips with the mistake is a little below the nominal 20%.
+* Every condition uses one corrupted dataset, built from one draw of which trips to spoil. The five
+  seeds vary the training run, not the draw, so the numbers do not say how much a different draw of the
+  same 20% would move them.
 * Established results are the ones marked solid in the Statistics section. The explanation of the mixed
   dataset (dose curves that are steepest at small shares) and the reading of the wrong turn failures as
   getting lost are hypotheses.
@@ -377,6 +486,12 @@ Brick 9 (statistics, reads `results/trips`, no training, under a minute):
 
 ```bash
 python src/stats_brick9.py                    # intervals, Holm correction, interactions; writes results/brick9_*.csv and figures/brick9_intervals.png
+```
+
+Generalization (splits the test trips into seen and never seen start and goal pairs, no training):
+
+```bash
+python src/generalization.py                  # writes results/generalization.csv
 ```
 
 Running `evaluate.py` again replaces a model's row, so `results/results.csv` never holds duplicates, and
@@ -503,14 +618,16 @@ Two definitions changed after testing:
 * **Error types:** wrong left turn, wrong right turn, delayed turn, speed error, obstacle mistake and
   missing recovery. Each one is a flawed version of the expert that records its own trips.
 * **Datasets:** clean, six single error sets (20% of trips corrupted), three pairs and one mix of all
-  errors, eleven datasets in total.
-* **Runs:** 11 datasets × 5 seeds = 55 BC policies.
+  errors. Brick 7 added the same six errors at 50% and 100%, and three cut to an equal number of error
+  steps, for 26 datasets in total.
+* **Runs:** 26 datasets × 5 seeds = 130 BC policies.
 * **Fairness:** every policy uses the same network and training settings and drives the same 200 test
   trips. A difference counts as real only when it is larger than about twice the spread between seeds;
   the Statistics section adds paired bootstrap intervals with Holm correction.
-* **Test trips:** the 200 test trips are drawn from the same maze cells as the training trips, so most
-  start and goal pairs have been seen in training, with different starting noise. The test measures how
-  well a policy drives this maze, not how it handles a new maze.
+* **Test trips:** the 200 test trips are drawn from the same maze cells as the training trips. 114 of
+  them use a start and goal pair that appears in training and 86 use a pair that never appears; the
+  Generalization section scores both halves. The test measures how well a policy drives this maze, not
+  how it handles a new maze.
 * **Interaction test:** for errors A and B,
   `interaction = (S_clean − S_AB) − [(S_clean − S_A) + (S_clean − S_B)]`.
   A positive value means the pair hurts more than the two errors added together.

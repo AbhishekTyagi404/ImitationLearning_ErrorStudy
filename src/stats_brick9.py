@@ -1,21 +1,36 @@
-"""Brick 9 statistics: paired bootstrap intervals, Holm correction and per seed interactions.
+"""Brick 9 statistics: permutation tests, paired bootstrap intervals and per seed interactions.
 
 Run:  python src/stats_brick9.py                    (reads results/trips)
       python src/stats_brick9.py --trips PATH --draws 10000
 
-Every policy drives the same 200 test trips, so a bootstrap draw picks 200 trip positions once and
-applies them to every dataset (the trips stay paired). Training seeds are the second source of
-variation: each draw also picks five seeds with replacement. For a comparison with clean BC the two
-datasets draw their seeds independently, which assumes nothing about how seeds line up. For an
-interaction the four datasets share the seed draw, since I is computed seed by seed.
+Three ways of measuring the same uncertainty, each with its own weakness:
+
+  permutation   The honest test. Five clean policies and five flawed ones are pooled and split again
+                in all 252 ways, with the test trips held fixed. The p value is the share of splits
+                whose gap is at least as large as the one we saw. With five against five the smallest
+                p value possible is 2/252 = 0.0079, so after Holm correction for six errors nothing
+                can fall below 0.048. These p values feed the Holm correction.
+  bootstrap     The interval. Each draw picks 200 trip positions once and applies them to every
+                dataset, so the trips stay paired, and picks five seeds with replacement. Its p value
+                comes from where the interval sits, which is not a null test, so it is reported but
+                not corrected.
+  seed t        The matched check. Seed s of a dataset against seed s of clean BC, five differences,
+                a t interval. It uses the shared seed numbers that the bootstrap throws away.
+
+A result counts as solid when the bootstrap interval and the seed interval both exclude zero.
+
+Metrics are the collision rate, the success rate and an efficiency over all 200 trips (the expert's
+distance over the policy's distance on a trip that reached the goal, zero on a trip that did not),
+which the success conditioned efficiency in evaluate.py cannot see because failed trips drop out of it.
 
 Writes:
   results/brick9_seed_results.csv     success and collision rate of every policy
-  results/brick9_changes.csv          change against clean BC with 95% interval and p value
+  results/brick9_changes.csv          change against clean BC with 95% interval and p values
   results/brick9_interactions.csv     interaction of each pair, per seed and bootstrap, and mixed vs singles
   figures/brick9_intervals.png        change against clean BC with 95% intervals for the six errors
 """
 import argparse
+from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +41,10 @@ SINGLE = ["wrong_left", "wrong_right", "speed_fast", "delayed_turn", "wall_huggi
 PAIRS = [("delayed_turn", "missing_recovery"), ("delayed_turn", "wall_hugging"), ("missing_recovery", "speed_fast")]
 SEEDS = 5
 KEY = ["start_row", "start_col", "goal_row", "goal_col"]
-METRICS = {"collision": "collided", "success": "success"}
+METRICS = ["collision", "success", "efficiency_all"]
+# every way of splitting ten policies into two groups of five, for the permutation test
+LEFT = np.array(list(combinations(range(2 * SEEDS), SEEDS)))
+RIGHT = np.array([[i for i in range(2 * SEEDS) if i not in set(c)] for c in LEFT])
 
 
 def dataset_list():
@@ -37,8 +55,20 @@ def dataset_list():
     return names
 
 
+def trip_values(t, metric):
+    """One number per test trip, between 0 and 1. Everything downstream turns it into points."""
+    if metric == "collision":
+        return t.collided.astype(float).values
+    if metric == "success":
+        return t.success.astype(float).values
+    ok = t.success.astype(bool).values                      # efficiency over all trips, failures count as zero
+    out = np.zeros(len(t))
+    out[ok] = t.expert_travelled.values[ok] / t.travelled.values[ok]
+    return out
+
+
 def load(trips_dir):
-    """Returns {metric: {dataset: array (seeds, trips) of 0/1}} after checking the trips line up."""
+    """Returns {metric: {dataset: array (seeds, trips)}} after checking the trips line up."""
     out = {m: {} for m in METRICS}
     ref = None
     for name in dataset_list():
@@ -48,11 +78,24 @@ def load(trips_dir):
             if ref is None:
                 ref = t[KEY].copy()
             assert len(t) == len(ref) and (t[KEY].values == ref.values).all(), f"trips differ in {name} seed {seed}"
-            for m, col in METRICS.items():
-                rows[m].append(t[col].astype(float).values)
+            for m in METRICS:
+                rows[m].append(trip_values(t, m))
         for m in METRICS:
             out[m][name] = np.array(rows[m])
     return out
+
+
+def permutation_p(a, b):
+    """Exact two sided permutation test over the ten policies, with the test trips held fixed.
+
+    Under the null the condition label carries no information, so any five of the ten policies could
+    have been the flawed group. The p value is the share of the 252 splits whose gap is at least as
+    large as the one we saw.
+    """
+    pool = np.concatenate([a.mean(1), b.mean(1)])
+    observed = a.mean() - b.mean()
+    gaps = pool[LEFT].mean(1) - pool[RIGHT].mean(1)
+    return float((np.abs(gaps) >= abs(observed) - 1e-12).mean())
 
 
 def draw_indices(rng, draws, n_trips):
@@ -70,7 +113,9 @@ def interval(x):
 
 
 def p_value(x):
-    """Two sided bootstrap p value for 'the change is zero'; the smallest resolvable value is 2 / draws."""
+    """Where the bootstrap interval sits relative to zero. This reads like a p value and is reported as
+    one, but it comes from a distribution centred on the observed change, so it is not a null test and
+    the Holm correction uses permutation_p instead. The smallest value it can give is 2 / draws."""
     n = len(x)
     return min(1.0, 2 * (min((x <= 0).sum(), (x >= 0).sum()) + 1) / (n + 1))
 
@@ -104,13 +149,14 @@ def changes(data, rng, draws):
             half = stats.t.ppf(0.975, SEEDS - 1) * per_seed.std(ddof=1) / np.sqrt(SEEDS)
             rows.append({"metric": metric, "dataset": name, "clean_mean": clean.mean() * 100,
                          "dataset_mean": arr.mean() * 100, "change": (arr.mean() - clean.mean()) * 100,
-                         "ci_low": lo, "ci_high": hi, "p_value": p_value(d),
+                         "ci_low": lo, "ci_high": hi, "p_permutation": permutation_p(arr, clean),
+                         "p_bootstrap": p_value(d),
                          "seed_ci_low": per_seed.mean() - half, "seed_ci_high": per_seed.mean() + half})
     df = pd.DataFrame(rows)
     df["holm_p_six_errors"] = np.nan
     for metric in METRICS:
         m = (df.metric == metric) & df.dataset.isin(SINGLE)
-        df.loc[m, "holm_p_six_errors"] = holm(df.loc[m, "p_value"].values)
+        df.loc[m, "holm_p_six_errors"] = holm(df.loc[m, "p_permutation"].values)
     df["interval_excludes_zero"] = (df.ci_low > 0) | (df.ci_high < 0)
     df["seed_interval_excludes_zero"] = (df.seed_ci_low > 0) | (df.seed_ci_high < 0)
     df["solid"] = df.interval_excludes_zero & df.seed_interval_excludes_zero      # both intervals exclude zero
@@ -173,7 +219,7 @@ def summarize_seedwise(label, per_seed, boot):
     return {"comparison": label, "per_seed_values": " ".join(f"{v:+.1f}" for v in per_seed),
             "mean": per_seed.mean(), "seed_se": se, "seed_ci_low": per_seed.mean() - t * se,
             "seed_ci_high": per_seed.mean() + t * se, "boot_ci_low": lo, "boot_ci_high": hi,
-            "boot_p": p_value(boot)}
+            "boot_p": p_value(boot), "seed_p": stats.ttest_1samp(per_seed, 0).pvalue}
 
 
 def interactions(data, rng, draws):
@@ -211,7 +257,8 @@ def main():
         for s in range(SEEDS):
             seed_rows.append({"dataset": name, "seed": s,
                               "success_rate": data["success"][name][s].mean() * 100,
-                              "collision_rate": data["collision"][name][s].mean() * 100})
+                              "collision_rate": data["collision"][name][s].mean() * 100,
+                              "efficiency_all_trips": data["efficiency_all"][name][s].mean() * 100})
     pd.DataFrame(seed_rows).round(2).to_csv("results/brick9_seed_results.csv", index=False)
 
     ch = changes(data, rng, args.draws)
@@ -221,16 +268,24 @@ def main():
     Path("figures").mkdir(exist_ok=True)
     draw_intervals(ch, "figures/brick9_intervals.png")
 
-    pd.set_option("display.width", 220)
+    pd.set_option("display.width", 230)
     print(f"Clean BC: success {data['success']['expert_clean'].mean() * 100:.1f}%, "
-          f"collisions {data['collision']['expert_clean'].mean() * 100:.1f}%  ({args.draws} bootstrap draws)\n")
-    cols = ["dataset", "dataset_mean", "change", "ci_low", "ci_high", "p_value", "holm_p_six_errors",
-            "interval_excludes_zero"]
+          f"collisions {data['collision']['expert_clean'].mean() * 100:.1f}%, "
+          f"efficiency over all trips {data['efficiency_all']['expert_clean'].mean() * 100:.1f}"
+          f"  ({args.draws} bootstrap draws, 252 permutations)\n")
+    cols = ["dataset", "dataset_mean", "change", "ci_low", "ci_high", "seed_ci_low", "seed_ci_high",
+            "p_permutation", "holm_p_six_errors", "solid"]
+    titles = {"collision": "collision rate", "success": "success rate",
+              "efficiency_all": "efficiency over all trips (failures count as zero)"}
     for metric in METRICS:
-        print(f"Change in {metric} rate against clean BC (percentage points), 95% interval:")
+        print(f"Change in {titles[metric]} against clean BC (points), 95% intervals:")
         print(ch[ch.metric == metric][cols].round(3).to_string(index=False), "\n")
-    print("Interaction on collision rate (percentage points):")
+    print(f"Smallest p value five against five policies can give: {2 / len(LEFT):.4f}; "
+          f"after Holm for six errors: {6 * 2 / len(LEFT):.3f}\n")
+    print("Interaction on collision rate (points):")
     print(ix.round(2).to_string(index=False))
+    print("\nSaved results/brick9_changes.csv, brick9_interactions.csv, brick9_seed_results.csv "
+          "and figures/brick9_intervals.png")
 
 
 if __name__ == "__main__":
