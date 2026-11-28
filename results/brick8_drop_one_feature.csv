@@ -1,0 +1,9 @@
+dropped,accuracy,cost
+collision_rate,63.33,8.33
+end_dist_failed,65.0,6.67
+speed,66.67,5.0
+step_ratio,66.67,5.0
+timeout_rate,71.67,0.0
+success_rate,71.67,0.0
+path_efficiency,71.67,0.0
+contact_steps_per_hit,71.67,0.0

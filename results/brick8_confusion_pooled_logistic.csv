@@ -1,0 +1,7 @@
+true,wrong_left,wrong_right,speed_fast,delayed_turn,wall_hugging,missing_recovery
+wrong_left,10,9,0,0,1,0
+wrong_right,5,13,1,0,1,0
+speed_fast,0,0,19,0,1,0
+delayed_turn,0,0,0,20,0,0
+wall_hugging,0,1,4,1,14,0
+missing_recovery,0,0,0,1,0,19

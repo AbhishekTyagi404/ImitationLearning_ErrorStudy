@@ -127,11 +127,12 @@ def load(trips_dir):
 
 
 def permutation_p(a, b):
-    """Exact two sided permutation test over the ten policies, with the test trips held fixed.
+    """Exact two sided permutation test over the 2n policies of a comparison (n seeds per side), with
+    the test trips held fixed.
 
-    Under the null the condition label carries no information, so any five of the ten policies could
-    have been the flawed group. The p value is the share of the 252 splits whose gap is at least as
-    large as the one we saw.
+    Under the null the condition label carries no information, so any n of the 2n policies could have
+    been the flawed group. The p value is the share of the C(2n, n) splits whose gap is at least as
+    large as the one we saw: 252 splits at five seeds, 184,756 at ten.
     """
     a, b = matched(a, b)
     left, right = splits(len(a))

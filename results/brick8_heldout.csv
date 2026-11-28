@@ -1,0 +1,9 @@
+model,held_out_dose,policies,accuracy,accuracy_wrong_turns_merged
+logistic,20%,60,58.3,65.0
+logistic,50%,30,96.7,100.0
+logistic,100%,30,66.7,83.3
+logistic,all three,120,70.0,78.3
+forest,20%,60,58.3,68.3
+forest,50%,30,83.3,100.0
+forest,100%,30,63.3,80.0
+forest,all three,120,65.8,79.2

@@ -594,6 +594,10 @@ pdflatex passes inside `Reports/`):
 python Reports/make_chart.py                  # Figure 3 of the report, Reports/figures/results_chart.pdf
 ```
 
+`results/` is committed, so `stats_brick9.py`, `classify_error.py`, `generalization.py` and
+`Reports/make_chart.py` rerun from a fresh clone in a few minutes with no training. Models and training
+data are not committed and are rebuilt with the commands above.
+
 Running `evaluate.py` again replaces a model's row, so `results/results.csv` never holds duplicates, and
 two runs give identical numbers. The file `results/trips/<model>.csv` keeps one row per test trip (end
 point, first wall contact and so on) as input for the error type classifier.
@@ -608,7 +612,7 @@ src/        all code; src/common.py defines the environment and the expert
 data/       generated datasets (.npz, .csv); only the clean expert data is in git
 models/     trained policies (.pt); only clean BC seeds 0 to 4 are in git
 figures/    plots: expert trips, clean versus corrupted trips, Brick 7 to 9 figures
-results/    evaluation tables, not in git
+results/    evaluation tables and every test trip log (in git)
 Reports/    final report: LaTeX source, PDF, IEEEtran.cls, its figures and make_chart.py
 ```
 
