@@ -166,7 +166,8 @@ datasets, which are inside all 500 trips of the 100% datasets.
   result for wrong turns at 20% does not hold at higher shares.
 * **Speed too fast helps when it is the only speed in the data.** At 100% it gives the highest success
   (97%), the shortest trips (194 steps) and the fewest wall contacts (25%). For this maze, a speed cap of
-  3.0 is a valid faster driving style, and it hurts only when mixed with the normal speed of 2.0.
+  3.0 is a valid faster driving style. Mixed with the normal speed of 2.0 it raises wall contact by about
+  6 to 7 points, a rise the permutation test does not confirm.
 
 ### The same amount of wrong data for every error
 

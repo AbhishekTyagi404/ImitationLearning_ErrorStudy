@@ -37,8 +37,8 @@ training seeds for the main comparison, three mistakes clear every test we apply
 permutation test after correction for six comparisons: a delayed turn at corners raises wall contact by 30
 points, a missing recovery step by 14 and wall hugging by 11, and all three hold on maze routes the training data
 never contained. The other three do not: wrong turns into side corridors show no collision effect at a 20\%
-corrupted share, though they cost 15 points of success once every trip carries one, and a fast driving speed is a
-working faster style that only hurts when mixed with the normal speed. No pair of mistakes hurts more than the
+corrupted share, though they cost 15 points of success once every trip carries one, and a fast driving speed has no effect
+any test confirms and becomes a working faster style once it is the only speed in the data. No pair of mistakes hurts more than the
 sum of its parts, yet mixing all six into one dataset hurts more than the average single mistake does. A small
 classifier reads a policy's own test rollouts and names which of six mistakes trained it with 72\% accuracy
 against a 17\% chance rate, and 70\% at a corruption strength it never trained on, though it cannot tell a clean
@@ -93,7 +93,7 @@ The midterm reported the six single errors at one corrupted share, judged by a d
 counted when it exceeded twice the larger seed standard deviation. Six things changed after that report.
 
 That descriptive rule became a statistical test. Each comparison now carries an exact permutation test over the
-ten training runs behind it, with Holm correction across the six main errors, alongside a paired bootstrap
+training runs behind it, with Holm correction across the six main errors, alongside a paired bootstrap
 interval and a seed matched interval. A result counts as solid only when both intervals exclude zero and the
 permutation p value survives the correction.
 
@@ -462,7 +462,9 @@ analysis: scoring 300 runs with the error labels shuffled, and dropping each inp
 The study runs on Python 3.11, PyTorch on a CPU and Gymnasium Robotics 1.4 with MuJoCo, and one policy trains in
 about one minute. The demonstration data is fixed by data seed 0. The commands \texttt{corrupt.py --error all},
 \texttt{train\_bc.py --data <file> --seed <k>}, \texttt{evaluate.py --expert}, \texttt{stats\_brick9.py} and
-\texttt{generalization.py} rebuild every number in this report from the public repository \cite{repo}.
+\texttt{generalization.py} rebuild every number in this report from the public repository \cite{repo}. The
+repository holds every test trip log and every results table, so the statistics, the diagnosis classifier and
+the generalization check rerun from a fresh copy in a few minutes without training any policy.
 
 %=======================================================================
 \section{Results}\label{sec:results}
@@ -622,8 +624,8 @@ harmless, only that this particular outcome does not show the damage at that sha
 
 Speed too fast helps once it is the only speed in the data. At 100\% it gives the highest success of any policy
 in the study, 97\%, with the shortest trips at 194 steps and the fewest wall contacts at 25\%. A speed cap of 3.0
-is a valid faster driving style on this maze, and it costs collisions only when it is mixed with the normal speed
-of 2.0, as it is in the main comparison.
+is a valid faster driving style on this maze. Mixed with the normal speed of 2.0, as in the main comparison, it
+raises wall contact by about 6 to 7 points, a rise the permutation test does not confirm.
 
 \subsection{The same amount of wrong data for every error}
 
