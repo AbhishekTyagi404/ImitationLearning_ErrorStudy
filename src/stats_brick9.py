@@ -5,11 +5,18 @@ Run:  python src/stats_brick9.py                    (reads results/trips)
 
 Three ways of measuring the same uncertainty, each with its own weakness:
 
-  permutation   The honest test. Five clean policies and five flawed ones are pooled and split again
-                in all 252 ways, with the test trips held fixed. The p value is the share of splits
-                whose gap is at least as large as the one we saw. With five against five the smallest
-                p value possible is 2/252 = 0.0079, so after Holm correction for six errors nothing
-                can fall below 0.048. These p values feed the Holm correction.
+  permutation   The unpaired test. Five clean policies and five flawed ones are pooled and split
+                again in all 252 ways, with the test trips held fixed. The p value is the share of
+                splits whose gap is at least as large as the one we saw. With five against five the
+                smallest p value possible is 2/252 = 0.0079, so after Holm correction for six errors
+                nothing can fall below 0.048. These p values feed the main Holm correction. The test
+                treats the ten runs as exchangeable, which the shared seed numbers argue against.
+  paired perm.  The matched version of the same idea. Seed s of a dataset and seed s of clean BC are
+                a pair, and the label inside a pair is flipped in all 2^5 = 32 ways. It respects the
+                pairing, at the cost of resolution: the smallest p it can give is 2/32 = 0.0625 and
+                the smallest after Holm for six errors is 0.375, so at five seeds it cannot show
+                significance however large the effect. Reported beside the unpaired test so that the
+                limit of five seeds is visible rather than implied.
   bootstrap     The interval. Each draw picks 200 trip positions once and applies them to every
                 dataset, so the trips stay paired, and picks five seeds with replacement. Its p value
                 comes from where the interval sits, which is not a null test, so it is reported but
@@ -30,7 +37,7 @@ Writes:
   figures/brick9_intervals.png        change against clean BC with 95% intervals for the six errors
 """
 import argparse
-from itertools import combinations
+from itertools import combinations, product
 from pathlib import Path
 
 import numpy as np
@@ -42,9 +49,11 @@ PAIRS = [("delayed_turn", "missing_recovery"), ("delayed_turn", "wall_hugging"),
 SEEDS = 5
 KEY = ["start_row", "start_col", "goal_row", "goal_col"]
 METRICS = ["collision", "success", "efficiency_all"]
-# every way of splitting ten policies into two groups of five, for the permutation test
+# every way of splitting ten policies into two groups of five, for the unpaired permutation test
 LEFT = np.array(list(combinations(range(2 * SEEDS), SEEDS)))
 RIGHT = np.array([[i for i in range(2 * SEEDS) if i not in set(c)] for c in LEFT])
+# every way of flipping the label inside each of the five seed pairs, for the paired permutation test
+SIGNS = np.array(list(product([1, -1], repeat=SEEDS)))
 
 
 def dataset_list():
@@ -96,6 +105,26 @@ def permutation_p(a, b):
     observed = a.mean() - b.mean()
     gaps = pool[LEFT].mean(1) - pool[RIGHT].mean(1)
     return float((np.abs(gaps) >= abs(observed) - 1e-12).mean())
+
+
+def paired_permutation_p(a, b):
+    """Exact two sided sign flip test over the five matched seed pairs.
+
+    The same five seed numbers set the starting weights and the batch order in every dataset, so
+    seed s of a flawed dataset and seed s of clean BC are a matched pair rather than two unrelated
+    draws. Under the null the label inside a pair carries no information, so each of the five
+    differences could have come out with either sign, which gives 2^5 = 32 assignments. The p value
+    is the share of those whose mean difference is at least as large in size as the one we saw.
+
+    The smallest p this can return is 2/32 = 0.0625, and after Holm correction for six errors nothing
+    can fall below 6 x 0.0625 = 0.375, so at five seeds this test cannot reach significance however
+    large the effect is. It is reported beside the unpaired test because it respects the pairing that
+    the unpaired test assumes away; the two together say what five seeds can and cannot settle.
+    """
+    d = a.mean(1) - b.mean(1)
+    observed = d.mean()
+    means = (SIGNS * d).mean(1)
+    return float((np.abs(means) >= abs(observed) - 1e-12).mean())
 
 
 def draw_indices(rng, draws, n_trips):
@@ -150,13 +179,16 @@ def changes(data, rng, draws):
             rows.append({"metric": metric, "dataset": name, "clean_mean": clean.mean() * 100,
                          "dataset_mean": arr.mean() * 100, "change": (arr.mean() - clean.mean()) * 100,
                          "ci_low": lo, "ci_high": hi, "p_permutation": permutation_p(arr, clean),
+                         "p_paired_permutation": paired_permutation_p(arr, clean),
                          "p_bootstrap": p_value(d),
                          "seed_ci_low": per_seed.mean() - half, "seed_ci_high": per_seed.mean() + half})
     df = pd.DataFrame(rows)
     df["holm_p_six_errors"] = np.nan
+    df["holm_p_paired"] = np.nan
     for metric in METRICS:
         m = (df.metric == metric) & df.dataset.isin(SINGLE)
         df.loc[m, "holm_p_six_errors"] = holm(df.loc[m, "p_permutation"].values)
+        df.loc[m, "holm_p_paired"] = holm(df.loc[m, "p_paired_permutation"].values)
     df["interval_excludes_zero"] = (df.ci_low > 0) | (df.ci_high < 0)
     df["seed_interval_excludes_zero"] = (df.seed_ci_low > 0) | (df.seed_ci_high < 0)
     df["solid"] = df.interval_excludes_zero & df.seed_interval_excludes_zero      # both intervals exclude zero
@@ -274,14 +306,17 @@ def main():
           f"efficiency over all trips {data['efficiency_all']['expert_clean'].mean() * 100:.1f}"
           f"  ({args.draws} bootstrap draws, 252 permutations)\n")
     cols = ["dataset", "dataset_mean", "change", "ci_low", "ci_high", "seed_ci_low", "seed_ci_high",
-            "p_permutation", "holm_p_six_errors", "solid"]
+            "p_permutation", "holm_p_six_errors", "p_paired_permutation", "holm_p_paired", "solid"]
     titles = {"collision": "collision rate", "success": "success rate",
               "efficiency_all": "efficiency over all trips (failures count as zero)"}
     for metric in METRICS:
         print(f"Change in {titles[metric]} against clean BC (points), 95% intervals:")
         print(ch[ch.metric == metric][cols].round(3).to_string(index=False), "\n")
-    print(f"Smallest p value five against five policies can give: {2 / len(LEFT):.4f}; "
-          f"after Holm for six errors: {6 * 2 / len(LEFT):.3f}\n")
+    print(f"Unpaired test, five against five policies, smallest p it can give: {2 / len(LEFT):.4f}; "
+          f"after Holm for six errors: {6 * 2 / len(LEFT):.3f}")
+    print(f"Paired test, five seed pairs, smallest p it can give: {2 / len(SIGNS):.4f}; "
+          f"after Holm for six errors: {6 * 2 / len(SIGNS):.3f} "
+          f"(so the paired test cannot reach 0.05 at five seeds, whatever the effect size)\n")
     print("Interaction on collision rate (points):")
     print(ix.round(2).to_string(index=False))
     print("\nSaved results/brick9_changes.csv, brick9_interactions.csv, brick9_seed_results.csv "

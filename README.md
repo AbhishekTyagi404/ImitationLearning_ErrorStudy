@@ -287,6 +287,11 @@ weakness.
   each other. The five seed numbers are shared across every dataset, so this is an assumption rather than
   a fact about the data; the Limitations section says more. For the six single errors at 20% these p
   values are corrected with Holm's method.
+* **A paired permutation test** is the matched version of that test, added after a reviewer asked for it.
+  Seed s of a dataset and seed s of clean BC are a pair, and the label inside a pair is flipped in all
+  2^5 = 32 ways. It respects the pairing the test above assumes away, and it is coarser for it: the
+  smallest p value it can give is 2/32 = 0.0625, and the smallest after Holm correction for six errors
+  is 0.375, so at five seeds it cannot certify anything at 0.05 however large the effect.
 * **A paired bootstrap** gives the interval. Each draw picks 200 trip positions once and applies them to
   every dataset, so the trips stay paired, and picks five training seeds with replacement, 10,000 draws
   in all.
@@ -294,9 +299,19 @@ weakness.
   differences, a t interval. It uses the shared seed numbers that the bootstrap throws away.
 
 A result counts as solid when the bootstrap interval and the seed interval both exclude zero. Five
-policies against five put a floor under the permutation test: the smallest p value it can give is
-2/252 = 0.0079, so after Holm correction for six errors nothing can fall below 0.048. Two errors reach
+policies against five put a floor under the unpaired permutation test: the smallest p value it can give
+is 2/252 = 0.0079, so after Holm correction for six errors nothing can fall below 0.048. Two errors reach
 that floor, and more seeds are the only way past it.
+
+The paired test has a higher floor still, 0.0625 before correction and 0.375 after it. Delayed turn,
+missing recovery and wall hugging all land on that floor, which means every one of their five seed
+differences points the same way and no relabeling of the pairs gives a larger mean difference. That is
+the strongest signal the paired test can produce, and it is still short of 0.05 by construction. So the
+two tests bracket what five seeds support: the unpaired one clears the correction while assuming the
+pairing away, the paired one honours the pairing and lacks the resolution to conclude. The paired
+test cannot separate wall hugging from the two headline errors either; the unpaired test does, at 0.040
+against 0.008. Ten seeds would move the paired floor to about 0.002 before correction and 0.012 after
+it, which is the single change that would most improve the evidence here.
 
 ![Change against clean BC with 95% intervals](figures/brick9_intervals.png)
 
@@ -404,11 +419,12 @@ The full table for all 26 datasets is in `results/generalization.csv`.
 * Five policies against five put a floor of 0.0079 under any permutation p value here, and 0.048 after
   the correction for six errors. Two errors sit at that floor, and nothing in this study can report a
   smaller p value without more training seeds.
-* The permutation test assumes the ten training runs it reshuffles are independent of each other. The
-  five seed numbers are shared across every dataset and set the starting weights and the minibatch order
-  for all of them, so the runs are matched by seed rather than ten unrelated draws. The seed t interval
-  uses that matching directly, and both results marked solid in the Statistics section pass that check
-  too, but the permutation p value by itself rests on the independence assumption.
+* The unpaired permutation test assumes the ten training runs it reshuffles are independent of each
+  other. The five seed numbers are shared across every dataset and set the starting weights and the
+  minibatch order for all of them, so the runs are matched by seed rather than ten unrelated draws. The
+  seed t interval and the paired permutation test both use that matching directly, and the two results
+  marked solid pass the seed interval as well, but the unpaired p value by itself rests on the
+  independence assumption and the paired test has no resolution to settle it at five seeds.
 * Five training seeds per dataset. Brick 8 has five policies per error type, so one wrong prediction
   moves its score by 3.3 points.
 * Every model is the one after 120 epochs, with no validation split and no checkpoint choice. The epoch
