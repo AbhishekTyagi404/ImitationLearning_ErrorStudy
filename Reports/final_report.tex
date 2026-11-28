@@ -1,0 +1,924 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{subcaption}
+\usepackage[none]{hyphenat}   % no hyphens at line breaks
+\usepackage{url}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{pdfauthor={Abhishek Tyagi},pdftitle={Which Demonstration Mistakes Hurt Imitation Learning?},pdfsubject={CS59300 ILR Project Final Report}}
+\usepackage{stfloats}
+\usepackage{placeins}
+\DeclareMathOperator{\clip}{clip}
+\sloppy
+\emergencystretch=3em
+
+\begin{document}
+
+\title{Which Demonstration Mistakes Hurt\\Imitation Learning?\\[0.2em]
+\large A Controlled Study of Error Types in Robot Navigation}
+
+\author{\IEEEauthorblockN{Abhishek Tyagi, Nishad Gupta, Richard Li}
+\IEEEauthorblockA{CS59300 Imitation Learning for Robotics\\
+Final Project Report, November 2026}}
+
+\maketitle
+
+\begin{abstract}
+We study how specific kinds of mistakes in demonstration data change a behavior cloning (BC) policy for robot
+navigation. Six flawed versions of a scripted maze driver each drive a share of the training trips with one kind
+of mistake, and we score every resulting policy with paired statistical tests, not only averages. Two mistakes
+clear every test we ran: a delayed turn at corners raises wall contact by 33 points and a missing recovery step
+raises it by 16 points, both at the smallest p value a five seed design can produce (0.048 once six comparisons
+are corrected for), and both effects hold on maze routes the training data never contained. The other four
+mistakes are weaker or unclear at this corruption level: wrong turns into side corridors show no effect at a 20\%
+corrupted share but cost 15 points of success once every trip carries one, wall hugging and a fast driving speed
+raise collisions by 9 to 10 points without clearing the correction, and the fast speed on its own is a working
+faster style that only hurts once it is mixed with the normal speed. No pair of these mistakes hurts more than
+the sum of its parts, yet mixing all six into one dataset hurts more than the average single mistake does. A
+small classifier reads a policy's own test rollouts and names which of six mistakes trained it with 83\% accuracy
+(chance 17\%), keeps 73\% of that when asked about a corruption strength it never trained on, and still cannot
+tell a clean policy from a flawed one.
+\end{abstract}
+
+\begin{IEEEkeywords}
+imitation learning, behavior cloning, demonstration quality, robot navigation, data corruption
+\end{IEEEkeywords}
+
+%=======================================================================
+\section{Introduction}
+
+Imitation learning assumes the demonstrator is worth imitating. In practice a demonstration set is rarely clean:
+a human teleoperator turns a corner late, drifts toward a wall, takes a wrong corridor and backs out, or simply
+drives faster than the policy should. Most published treatments of this problem describe demonstration quality
+with one scale, from worse to better, and ask how to down weight the worse end. That framing leaves a practical
+question unanswered. If only part of a dataset can be cleaned or relabeled, which kind of mistake should be
+removed first?
+
+This project asks a narrower question that can be answered by a controlled experiment:
+
+\emph{When a fixed share of the demonstrations used to train a behavior cloning navigation policy contains one
+specific kind of mistake, which kinds of mistake change the learned policy the most, and what property of a
+mistake decides whether it carries over into the policy?}
+
+We answer it by building six flawed versions of a scripted expert for a maze navigation task, each committing one
+named mistake, and by holding everything else fixed: the same 500 trips, the same start and goal cells, the same
+simulator seeds, the same network, the same training recipe and the same 200 test trips. Only the kind of mistake
+changes in the main comparison, and the share of corrupted trips changes in a second set of runs. In total the
+study trains and scores 130 policies across 26 datasets.
+
+Two findings survive every statistical test we apply. A delayed turn at corners raises the share of test trips
+with a wall contact by 33 points, and a missing recovery step raises it by 16 points. Both sit at the smallest
+corrected p value this design can produce, both hold on maze routes absent from the training data, and the second
+one holds even after every error is cut to the same number of wrong training steps. The remaining four mistakes
+are weaker, dose dependent or, in the case of a faster driving speed, not a mistake at all once the whole dataset
+uses it.
+
+Three further results come out of the same 130 policies. No pair of mistakes placed on the same trips hurts more
+than the two hurt separately, while spreading all six mistakes across one dataset hurts more than the average
+single mistake does. A classifier that sees only a policy's own test rollouts, never its training data, names
+which of six mistakes trained that policy with 83\% accuracy against a 17\% chance rate, and keeps 73\% of that
+when tested at a corruption strength held out of its training. The same classifier cannot reliably tell a clean
+policy from a flawed one, which marks the limit of this kind of diagnosis.
+
+\subsection{What changed since the midterm}
+The midterm reported the six single errors at one corrupted share, judged by a descriptive rule: a difference
+counted when it exceeded twice the larger seed standard deviation. Five things changed after that report.
+
+That descriptive rule became a statistical test. Each comparison now carries an exact permutation test over the
+ten training runs behind it, with Holm correction across the six main errors, alongside a paired bootstrap
+interval and a seed matched interval. A result counts as solid only when the bootstrap and the seed interval both
+exclude zero.
+
+The corrupted share and the amount of wrong data are now varied on purpose. The same six errors were rebuilt at
+50\% and 100\% of the trips, and three of them were cut down to the same number of wrong steps as a wrong turn
+carries, so the dose of a mistake and the kind of mistake are no longer tangled together.
+
+Three pairs of errors and one mixture of all six were trained and scored, and the interaction test proposed at the
+midterm is now computed from resampled seeds and trip positions rather than from combined standard errors.
+
+The diagnosis classifier that the midterm listed as a plan was built, and pushed past its first form: it is now
+tested at a corruption strength held out of training, and on the harder question of telling a clean policy from a
+flawed one.
+
+A generalization check was added that the midterm did not plan for. The 200 test trips split into those whose
+start and goal cells were used together in training and those that were not, which lets every finding be checked
+against routes the policy never practiced.
+
+%=======================================================================
+\section{Related Work}
+
+\subsection{Behavior cloning and compounding error}
+Behavior cloning treats imitation as supervised learning from state to action, an idea that goes back to ALVINN,
+which drove a vehicle from camera images through a small neural network trained on recorded human steering
+\cite{pomerleau}. Its weakness is well understood. Ross and Bagnell showed that a policy trained this way sees
+only the states the expert visited, so any error moves the learner into unfamiliar territory where the error
+grows, and the total cost can scale with the square of the task horizon rather than linearly \cite{ross2010}.
+DAgger removes that failure mode by collecting labels on the states the learner itself reaches, repeatedly
+querying the expert as the policy improves, which reduces the problem to no regret online learning and recovers a
+linear bound \cite{dagger}.
+
+This line of work assumes the expert's labels are correct. It explains why unfamiliar states are dangerous, and
+it offers an answer when the expert is available for more queries, yet it says nothing about what happens when
+the labels themselves contain mistakes. The failure it describes and the failure we study can occur together: a
+flawed label pushes the policy toward a state the expert rarely visited, and compounding error takes over from
+there. We keep the learner fixed at plain BC, with no interactive querying, so that any change we measure comes
+from the labels rather than from the learning rule.
+
+\subsection{Noise injection and recovery data}
+DART attacks the same covariate shift from the data collection side. It perturbs the actions the expert executes
+during collection while recording the action the expert meant to take, so the demonstrations pass through states
+slightly off the ideal route and show how to return to it \cite{dart}. The noise is random, carries no consistent
+direction, is applied with the expert's intent still recorded, and is added to help.
+
+Our mistakes invert each of those properties. They are structured rather than random, they are recorded as the
+labels rather than corrected in the recording, and they are meant to hurt. One of our six, the missing recovery
+error, is close to DART run backwards: the slip off the route is recorded, and the steps that steer back are
+deleted, which removes exactly the examples DART adds. That error turns out to be one of the two our results call
+solid, and the most harmful of the six per unit of wrong data.
+
+\subsection{Measuring demonstration quality}
+A second line of work measures quality rather than repairing it. The robomimic study trained the same policies on
+demonstrations from human operators of different skill and found large gaps in the resulting success rates,
+enough to dominate most algorithmic choices \cite{robomimic}. Belkhale et al.\ formalize demonstration quality
+through two quantities, how far an action diverges from what the learner would do and how much of the state space
+the transitions cover, and show that the two interact rather than adding \cite{belkhale}.
+
+Both describe a dataset with aggregate properties, which is the right level for choosing between datasets and the
+wrong level for deciding what to fix inside one. A single number for divergence cannot distinguish a demonstrator
+who turns late at every corner from one who occasionally wanders into the wrong corridor, though our results show
+those two leave very different policies behind. We hold the share of corrupted trips fixed in the main comparison
+and change only the kind of mistake, then vary the share separately, which separates the two axes those aggregate
+measures combine.
+
+\subsection{Learning from imperfect demonstrations}
+Several methods learn usable policies from demonstrations known to be imperfect. Wu et al.\ attach confidence
+scores to a small labeled subset and reweight the rest through semi supervised estimation \cite{wu2019}. Sasaki
+and Yamashina avoid the need for such scores, noting that a policy trained on a mixture of good and bad
+demonstrations can be used to reweight its own training data over several rounds \cite{sasaki}. Brown et al.\
+go further and extract a reward from ranked sub optimal demonstrations, which allows the learned policy to beat
+every demonstrator it was shown \cite{trex}.
+
+These methods treat bad data as generic sub optimality, to be discounted by a weight or a rank. None asks which
+mistakes matter most, so none offers guidance on where a limited cleaning budget should go. Our results name the
+two error types that would be worth filtering first, and show that two of the six are close to harmless at the
+share we studied most closely.
+
+A related question has a long history in supervised learning, where label noise is modeled explicitly and
+estimators are corrected for it \cite{natarajan}. The sequential setting differs in an important way: a wrong
+action in navigation changes every state that follows it, so a corrupted demonstration damages both the labels
+and the distribution of states those labels describe.
+
+\subsection{Corruption benchmarks}
+Hendrycks and Dietterich built a benchmark of named image corruptions at controlled severities and measured how
+each one degrades a classifier, which turned a vague notion of fragility into a table that can be compared across
+models \cite{hendrycks}. That benchmark concerns inputs at test time for a one step prediction problem.
+
+We borrow its design, a taxonomy of named corruptions applied at a controlled share of the data, and move it to
+the training demonstrations of a sequential policy, where the same corruption affects the labels and the state
+distribution at once. We add what a benchmark of this kind needs to be trusted at our sample size: a correction
+for multiple comparisons, intervals from two resampling schemes, and a check that each finding survives on routes
+the training data never contained.
+
+\subsection{Position of this work}
+This project contributes (1) a controlled comparison of six concrete navigation mistakes across three corrupted
+shares, with statistical tests behind the two findings that hold up; (2) measured interactions, sub additive for
+every pair of mistakes and super additive for a mixture of all six; (3) a classifier that names the training
+mistake from rollouts alone, including at a corruption strength never seen in training; and (4) evidence that the
+two solid findings are not an effect of memorized routes.
+
+%=======================================================================
+\section{Preliminaries}
+
+\subsection{Behavior cloning as supervised learning}
+The state is $s=(x,y,v_x,v_y,g_x,g_y)\in\mathbb{R}^6$, holding the ball's position, its velocity and the goal,
+and the action is a force $a=(f_x,f_y)\in[-1,1]^2$. An expert policy $\pi^*$ and, for each error type $k$, a
+flawed policy $\tilde\pi_k$ drive trips through the maze. Dataset $D_k$ contains $N=500$ trips, of which a share
+$\alpha N$ is driven by $\tilde\pi_k$ and the rest by $\pi^*$, with $\alpha\in\{0.2,0.5,1.0\}$ depending on the
+run. BC fits a network $\pi_\theta$ by minimizing the squared error between its output and the recorded action,
+\begin{equation}
+  L(\theta)=\frac{1}{|D_k|}\sum_{(s,a)\in D_k}\big\|\pi_\theta(s)-a\big\|^2 .
+  \label{eq:loss}
+\end{equation}
+
+\subsection{Why a wrong label can persist}
+The minimizer of the expected squared error at a state is the mean action recorded at that state. If a share
+$p_k(s)$ of the rows near $s$ come from the flawed driver, the learned policy approaches a blend of the two
+drivers,
+\begin{equation}
+  \pi_\theta(s)\;\approx\;a^*(s)+p_k(s)\,\big(\tilde a_k(s)-a^*(s)\big).
+  \label{eq:bias}
+\end{equation}
+Equation~\eqref{eq:bias} gives a testable prediction. A mistake transfers into the policy when its bias term
+$\tilde a_k-a^*$ points the same way across many states and trips, since those contributions add. A mistake
+averages out when it is rare, or when its bias term points in a different direction each time it occurs, since
+those contributions cancel. Section~\ref{sec:results} checks this prediction against the mistakes that turned out
+to survive every statistical test, and reports where it falls short.
+
+The prediction depends on the squared error objective, which is what makes averaging the right behavior for the
+network. Objectives that model the action distribution rather than its mean, such as energy based formulations of
+BC \cite{florence}, would not blend two drivers the same way, so the ranking reported here belongs to the
+standard regression form of BC rather than to imitation learning in general.
+
+\subsection{Environment}
+We use the Medium PointMaze task (version 3) from Gymnasium Robotics \cite{gymrobotics}, a descendant of the D4RL
+maze tasks \cite{d4rl}. A ball of radius 0.1 moves through an $8\times8$ grid of unit cells, where walls form the
+outer ring and several internal blocks, leaving 26 open cells and so 650 ordered start and goal pairs. The action
+is a force rather than a velocity, so the ball carries momentum and has to brake before a corner, which is what
+makes a late turn a physically meaningful mistake. A trip succeeds when the ball comes within 0.5 of the goal and
+is cut off after 600 steps. We chose Medium over the smaller UMaze after a pilot run: on UMaze, BC on clean data
+already reached 100\% success, which leaves no room to measure damage. Figure~\ref{fig:expert} shows a sample of
+expert trips and the speed profile the controller holds along them.
+
+\begin{figure}[tbp]
+\centering
+\includegraphics[width=\columnwidth]{expert_trajectories.png}
+\caption{Five expert trips through the maze (left) and the speed the controller holds along a trip (right). The
+500 training trips cover 359 of the 650 possible start and goal pairs; Section~\ref{sec:generalization} scores
+policies separately on the 86 of 200 test trips that use a pair the training data never contained.}
+\label{fig:expert}
+\end{figure}
+
+\subsection{Evaluation metrics}\label{sec:metrics}
+Every policy drives the same $M=200$ test trips, fixed by one random seed. For trip $j$, let
+$\text{succ}_j\in\{0,1\}$ record whether the goal was reached, $T_j$ the steps taken, $L_j$ the distance
+travelled, $L^*_j$ the expert's distance on the same trip, and let $S$ be the set of successful trips. The four
+metrics are
+\begin{align}
+\text{Success}&=\tfrac{1}{M}\textstyle\sum_j \text{succ}_j,\\
+\text{Collision}&=\tfrac{1}{M}\textstyle\sum_j \mathbf{1}[\text{wall contact in trip } j],\\
+\text{Efficiency}&=\tfrac{1}{|S|}\textstyle\sum_{j\in S}L^*_j/L_j,\\
+\text{Time}&=\tfrac{1}{|S|}\textstyle\sum_{j\in S}T_j .
+\end{align}
+A wall contact is a MuJoCo contact between the ball and a wall with signed distance at most zero; near contacts
+inside MuJoCo's 2 mm margin do not count. The collision metric is a yes or no outcome per trip, so a trip that
+scrapes a wall once and a trip that scrapes it ten times count the same. The expert scores 1.0 on efficiency by
+construction.
+
+Efficiency and time are averaged over completed trips only, which hides damage in a specific way: a policy that
+fails its hardest trips keeps a flattering average on the trips it still finishes. We therefore report a second
+efficiency measure over all $M$ trips with a failed trip scored zero,
+\begin{equation}
+\text{Efficiency}_{\text{all}}=\tfrac{1}{M}\textstyle\sum_j \text{succ}_j\, L^*_j/L_j ,
+\label{eq:effall}
+\end{equation}
+which cannot be inflated this way.
+
+\subsection{Statistical tools}\label{sec:tools}
+Three standard tools carry the claims in this report, and each answers a different question about the same
+comparison.
+
+A permutation test asks whether a gap between two groups is larger than relabeling the group members at random
+would produce. With five policies on each side there are $\binom{10}{5}=252$ possible relabelings, few enough to
+enumerate exactly rather than sample, which makes the resulting p value exact at the resolution the design
+allows.
+
+A bootstrap resamples the data with replacement many times and reads an interval off the spread of the resulting
+estimates \cite{efron}. Resampling the shared test trips once per draw and applying that same sample to every
+dataset keeps the comparison paired, which removes the variation caused by some test trips being harder than
+others.
+
+Holm's step down procedure controls the probability of at least one false positive across a family of
+comparisons by testing the sorted p values against progressively weaker thresholds \cite{holm}. It is uniformly
+more powerful than a plain Bonferroni correction and makes no assumption about independence between the tests.
+
+%=======================================================================
+\section{Method}
+
+\subsection{Expert demonstrations}
+The expert plans a route over maze cells with breadth first search and steers along it with a two layer
+proportional derivative controller. For the next waypoint $w$, position $p$ and velocity $v$, the controller sets
+a desired velocity and then a force,
+\begin{align}
+v^{\text{des}}&=k_p\,(w-p),\quad \text{capped at } \|v^{\text{des}}\|\le v_{\max},\\
+a&=\clip\!\big(k_v\,(v^{\text{des}}-v),\,-1,\,1\big),
+\end{align}
+with $k_p=3$, $k_v=8$ and $v_{\max}=2$, found by grid search and reaching 100\% success on 150 random trips. The
+clean dataset holds 500 trips between random start and goal cells, all successful, with 106{,}543 steps in total
+and between 15 and 463 steps per trip. We generate the demonstrations ourselves instead of downloading an
+existing set, since each flawed driver has to replay the expert's exact trips for the comparison to hold
+everything else fixed.
+
+\subsection{Injecting mistakes}
+Every corrupted dataset replays the same 500 trips as the clean data, with the same start cell, goal cell and
+simulator seed. In the main comparison the same 100 trips, a 20\% share, are handed to the flawed driver for
+every error type, so the six datasets differ only in what the flawed driver does. Section~\ref{sec:results} adds
+50\% and 100\% versions, nested inside each other, and three versions cut to an equal number of wrong steps. The
+trips that stay clean in every dataset are byte identical to the clean data.
+
+The flawed driver really drives the ball through the simulator, so every recorded state is the true result of the
+action before it. Editing actions in a finished file would break that link and produce demonstrations no physical
+system could have generated. Each mistake was made stronger until it was clearly visible in plots and in wall
+contacts, which the expert never produces. Some routes have no corner, or no side corridor on the chosen side,
+and those trips stay clean even when selected. Of the 100 flawed trips in the main comparison, the mistake
+appears in 84 for the wrong left turn, 89 for the wrong right turn, 85 for the delayed turn, 99 for wall hugging,
+96 for missing recovery and 100 for the fast speed. For missing recovery, 1{,}550 recovery steps are left out of
+the data. Table~\ref{tab:errors} gives what each flawed driver does and how much of the training data its mistake
+touches, and Figure~\ref{fig:mazes} draws five of the six on the maze against the expert's own route.
+
+\begin{table*}[tbp]
+\centering\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.0cm}p{8.6cm}ccc@{}}
+\toprule
+Error & What the flawed driver does & Wall contact & Extra steps & Error steps\\
+\midrule
+wrong left turn & once per trip, at a random junction with an open side corridor on the left, drives into it for 25 steps, then plans a new route & 0\% & 31 & 1.9\%\\
+wrong right turn & the same, to the right & 0\% & 31 & 2.0\%\\
+speed too fast & speed cap $v_{\max}=3$ instead of 2 for the whole trip & 0\% & $-27$ & 11.6\%\\
+delayed turn & at every corner keeps going straight for 45 steps, past the corner and into the wall ahead, then turns & 79\% & 91 & 9.2\%\\
+wall hugging & aims 0.38 toward a side wall instead of the cell center, leaving a gap of 0.02 & 32\% & 43 & 15.4\%\\
+missing recovery & once per trip is pushed off its route (force 0.5 for 25 steps); the slip is recorded, the steps that steer back are left out & 26\% & 12 & 2.2\%\\
+\bottomrule
+\end{tabular}
+\caption{The six error types, at the 20\% corrupted share used in the main comparison. Wall contact and extra
+steps describe the flawed trips, against the same trips driven by the expert. Error steps: share of all training
+steps where the mistake is active. Speed too slow ($v_{\max}=1$) made 10 of 100 trips time out and is held back.}
+\label{tab:errors}
+\end{table*}
+
+\begin{figure*}[tbp]
+\centering
+\begin{subfigure}{0.19\textwidth}\includegraphics[width=\linewidth]{maze_wrong_left.png}\caption{wrong turn (left)}\end{subfigure}\hfill
+\begin{subfigure}{0.19\textwidth}\includegraphics[width=\linewidth]{maze_speed_fast.png}\caption{speed too fast}\end{subfigure}\hfill
+\begin{subfigure}{0.19\textwidth}\includegraphics[width=\linewidth]{maze_delayed_turn.png}\caption{delayed turn}\end{subfigure}\hfill
+\begin{subfigure}{0.19\textwidth}\includegraphics[width=\linewidth]{maze_wall_hugging.png}\caption{wall hugging}\end{subfigure}\hfill
+\begin{subfigure}{0.19\textwidth}\includegraphics[width=\linewidth]{maze_missing_recovery.png}\caption{missing recovery}\end{subfigure}
+\caption{Five of the six error types; the wrong right turn mirrors the left. Each panel shows four corrupted trips
+(solid) drawn over the same trips driven by the expert (dashed). Gaps in (e) are the recovery steps left out of
+the data.}
+\label{fig:mazes}
+\end{figure*}
+
+\subsection{Policy and training}\label{sec:training}
+The policy is a multilayer perceptron with layer sizes 6, 128, 128, 2, ReLU activations and a final tanh that
+keeps the output inside the legal action range. Inputs are standardized with the training mean and standard
+deviation, which are stored in the model file. We train with the loss in Equation~\eqref{eq:loss}, Adam
+\cite{adam} at learning rate $10^{-3}$, batches of 256 and 120 epochs. A pilot run with 40 epochs gave clean
+success of 86\%, 81\% and 93\% across three seeds, against 98\%, 95\% and 94\% with 120 epochs, so we use 120 to
+keep the baseline strong and stable. That choice was made by looking at clean success on the same test trips used
+for the results, before any corrupted dataset existed, and it is the same for every dataset, so it favors no
+error type over another; it remains a limitation of the completed study (Section~\ref{sec:limitations}) rather
+than one we were able to remove.
+
+Every dataset is trained with five random seeds, where a seed sets the network's initial weights and the order of
+minibatches. In total the completed study covers 26 datasets, namely clean data, six errors at three corrupted
+shares, three errors cut to an equal number of wrong steps, three pairs and one six way mixture, each trained
+with five seeds, for 130 policies in all.
+
+\subsection{Baselines}
+The expert driver gives the upper bound and BC on clean data is the reference that every corrupted dataset is
+compared against. The midterm's descriptive rule, a difference larger than twice the larger seed standard
+deviation, is kept as a quick visual guide in the first results table and in two figures, but it is no longer the
+basis for any claim. Every claim called solid in Section~\ref{sec:results} instead passes the tests below.
+
+\subsection{Statistical procedure}\label{sec:stats}
+For each of the six main errors we compare five clean policies against five policies trained on that error, using
+the tools described in Section~\ref{sec:tools}, and measure three things.
+
+\subsubsection{Permutation test}
+The ten training runs, five clean and five flawed, are pooled and re split into every one of the 252 possible
+groups of five against five, holding the 200 test trips fixed. The p value is the share of those splits whose gap
+is at least as large as the one observed. The smallest p value this can return is $2/252\approx0.0079$. Across
+the six main errors we apply Holm's correction, so the smallest corrected p value any of the six can reach is
+$6\times0.0079\approx0.048$. This test treats the ten training runs as exchangeable. The same five seed numbers
+are reused across every dataset, so the ten runs are matched by seed rather than ten fully independent draws; we
+report this test on that assumption and check it against the seed matched interval, which does not need it.
+
+\subsubsection{Paired bootstrap interval}
+Each of 10{,}000 draws samples the 200 test trip positions once, with replacement, and applies that same sample
+to every dataset, keeping the trips paired, then separately samples five training seeds with replacement. The
+2.5th and 97.5th percentiles of the resulting differences give a 95\% interval. Its own p value, read from where
+the interval sits relative to zero, is reported but not used for the Holm correction, since it answers a
+different question than the permutation p value.
+
+\subsubsection{Seed matched interval}
+For dataset $X$ and seed $s$ we take the difference between $X$'s seed $s$ policy and clean BC's seed $s$ policy,
+giving five matched differences, and compute a classic $t$ interval from them. This check uses the shared seed
+numbers directly rather than discarding them, and does not require treating the ten runs as exchangeable.
+
+A result is called solid only when the bootstrap interval and the seed matched interval both exclude zero. Two of
+the six main errors meet this bar, and Section~\ref{sec:results} reports which.
+
+\subsection{Generalization check}\label{sec:gen-method}
+The 500 training trips cover 359 of the 650 possible ordered start and goal pairs. Of the 200 fixed test trips,
+114 use a pair that appears in training and 86 use a pair that never does, though every individual cell appears
+in training as both a start and a goal, so an unseen test trip is a new route through a known maze rather than a
+new maze. Splitting the test trips on this line and scoring each half separately needs no retraining; it only
+reads the start and goal cell already stored in each saved trip.
+
+\subsection{Diagnosis classifier}
+The evaluator saves one row per test trip, holding the outcome, the steps taken, the end point, the first wall
+contact and the number of contact steps. We reduce each policy to eight numbers computed from these rows: success
+rate, collision rate, share of trips that hit the 600 step cap, steps divided by the expert's steps on the same
+trips, distance per step, path efficiency on completed trips, mean distance to the goal at the end of failed
+trips, and wall contact steps per trip that touched a wall. A logistic regression and a random forest of 300
+trees \cite{breiman} each predict the training error from those eight numbers.
+
+Scoring always leaves one seed out: train on four seeds, predict the fifth, rotate five times, so a model is
+never scored on a policy whose seed it trained on. Clean BC is not one of the six classes in the main result.
+Past that result we test two harder questions, namely naming the error at a corrupted share held out of training
+entirely, by training on two of the three shares and four seeds and predicting the third share's fifth seed, and
+telling a clean policy from a flawed one as a first stage, with the two classes weighted equally since there are
+only five clean policies against thirty flawed ones.
+
+\subsection{Reproducibility}
+The study runs on Python 3.11, PyTorch on a CPU and Gymnasium Robotics 1.4 with MuJoCo, and one policy trains in
+about one minute. The demonstration data is fixed by data seed 0. The commands \texttt{corrupt.py --error all},
+\texttt{train\_bc.py --data <file> --seed <k>}, \texttt{evaluate.py --expert}, \texttt{stats\_brick9.py} and
+\texttt{generalization.py} rebuild every number in this report from the public repository \cite{repo}.
+
+%=======================================================================
+\section{Results}\label{sec:results}
+
+The completed study trained and scored all 130 policies. Training loss falls from about 0.15 to about 0.06 over
+120 epochs for every dataset. We lead with the two findings that hold up under every test in
+Section~\ref{sec:stats}, then place the remaining four errors, the dose and matched exposure runs, the pair
+interactions, the generalization check and the diagnosis classifier around them.
+
+\subsection{The two solid findings}
+A delayed turn at corners and a missing recovery step are the only two of the six main errors whose effect on the
+collision rate survives both the paired bootstrap and the seed matched interval, and both sit exactly at the
+smallest Holm corrected p value this design can produce, with five policies on each side of every comparison
+(Table~\ref{tab:stats}).
+
+\begin{table*}[tbp]
+\centering\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Error (20\% of trips) & Change & Bootstrap 95\% & Seed 95\% & Permutation $p$ & Holm $p$ & Solid\\
+\midrule
+Delayed turn & $\mathbf{+33.2}$ & $[25.2,41.7]$ & $[23.0,43.4]$ & $0.008$ & $\mathbf{0.048}$ & yes\\
+Missing recovery & $\mathbf{+15.7}$ & $[6.8,25.1]$ & $[3.9,27.5]$ & $0.008$ & $\mathbf{0.048}$ & yes\\
+Wall hugging & $+9.7$ & $[1.0,18.9]$ & $[3.6,15.8]$ & $0.040$ & $0.159$ & yes\\
+Speed too fast & $+9.1$ & $[-0.6,19.1]$ & $[-2.0,20.2]$ & $0.087$ & $0.262$ & no\\
+Wrong right turn & $+2.7$ & $[-6.9,12.8]$ & $[-12.5,17.9]$ & $0.619$ & $1.000$ & no\\
+Wrong left turn & $+0.7$ & $[-7.1,9.3]$ & $[-10.3,11.7]$ & $0.905$ & $1.000$ & no\\
+\bottomrule
+\end{tabular}
+\caption{Change in collision rate against clean BC, in points, for the six main errors at a 20\% corrupted share.
+Wall hugging is solid by the interval test but its raw permutation $p$ does not survive the Holm correction; at
+50\% and 100\% corrupted share it does (Section~\ref{sec:dose}).}
+\label{tab:stats}
+\end{table*}
+
+Delayed turn raises wall contact from 29\% of trips to 62\%, the largest effect in the study by a wide margin,
+lowers path efficiency from 0.89 to 0.80 and adds 25 steps to the average trip. Missing recovery raises wall
+contact by 16 points while leaving success, path efficiency and time close to clean. Both effects hold on the 86
+of 200 test trips whose start and goal pair the training data never contained
+(Section~\ref{sec:generalization}), so neither is an artifact of the policy repeating memorized routes.
+
+\subsection{The other four errors at a 20\% share}
+Table~\ref{tab:results} gives every metric for all six errors at the 20\% share, and Figure~\ref{fig:results}
+shows the collision and success rates with their spread across seeds.
+
+\begin{table*}[tbp]
+\centering\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Policy & Success (\%) & Collisions (\%) & Change & Path efficiency & Time to goal\\
+\midrule
+Expert driver (upper bound) & 100 & 0 & & 1.000 & 211\\
+BC, clean & $91.0\pm3.2$ & $28.5\pm7.4$ & & $0.887\pm0.025$ & $250\pm11$\\
+\midrule
+BC, delayed turn & $84.8\pm4.6$ & $\mathbf{61.7\pm1.9}$ & $\mathbf{+33.2}$ & $\mathbf{0.796\pm0.021}$ & $\mathbf{275\pm7}$\\
+BC, missing recovery & $89.3\pm1.8$ & $\mathbf{44.2\pm6.0}$ & $\mathbf{+15.7}$ & $0.873\pm0.019$ & $249\pm2$\\
+BC, wall hugging & $90.6\pm2.9$ & $38.2\pm5.8$ & $+9.7$ & $0.876\pm0.014$ & $258\pm8$\\
+BC, speed too fast & $91.5\pm2.0$ & $37.6\pm7.5$ & $+9.1$ & $0.897\pm0.023$ & $233\pm9$\\
+BC, wrong right turn & $88.9\pm1.6$ & $31.2\pm7.8$ & $+2.7$ & $0.875\pm0.020$ & $258\pm7$\\
+BC, wrong left turn & $91.0\pm3.4$ & $29.2\pm3.1$ & $+0.7$ & $0.856\pm0.020$ & $262\pm9$\\
+\bottomrule
+\end{tabular}
+\caption{Results on 200 fixed test trips, mean $\pm$ standard deviation over five seeds, at the 20\% corrupted
+share. ``Change'' is the collision rate minus the clean collision rate, in points. Bold marks a difference from
+clean BC larger than twice the larger seed standard deviation, the midterm's descriptive rule;
+Table~\ref{tab:stats} gives the test that now backs the two solid claims.}
+\label{tab:results}
+\end{table*}
+
+\begin{figure}[tbp]
+\centering
+\includegraphics[width=\columnwidth]{results_chart.pdf}
+\caption{Collision rate and success rate per dataset over five seeds; whiskers show one standard deviation and
+the dashed line marks the clean baseline. Dark bars pass the midterm's descriptive rule, pale bars do not.}
+\label{fig:results}
+\end{figure}
+
+BC falls short of the expert even on clean data. Trained on 500 perfect trips, the policy fails 9\% of test
+trips, touches a wall on 29\% and takes 18\% more steps than the expert. No wrong label causes this; it is the
+compounding error described by Ross and Bagnell \cite{ross2010}. One clean seed is an outlier, with 16\% wall
+contact against 29.5\% to 35\% for the other four, and it stays in the results, where it widens the clean spread.
+
+Wall hugging and the fast speed error raise collisions by 9 to 10 points at this share, short of the correction.
+The fast speed error makes trips shorter on average, 233 steps against 250, which fits a policy that learned to
+drive faster; Section~\ref{sec:dose} shows this is a working style rather than a mistake once it is the only
+speed in the data.
+
+Wrong turns show no effect at this share. Both stay within 3 points of clean on collisions and neither interval
+in Table~\ref{tab:stats} excludes zero. Section~\ref{sec:dose} shows that this null result does not hold at a
+higher corrupted share.
+
+\subsection{Dose: 20\%, 50\% and 100\% of the trips}\label{sec:dose}
+
+\begin{figure*}[tbp]
+\centering
+\includegraphics[width=0.84\textwidth]{brick7_dose.png}
+\caption{Collision rate and success rate as the corrupted share grows from none of the trips to all of them, five
+seeds at each share. The point at 0\% is clean BC.}
+\label{fig:dose}
+\end{figure*}
+
+\begin{table}[tbp]
+\centering\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+& \multicolumn{3}{c}{Collisions (\%)} & \multicolumn{3}{c}{Success (\%)}\\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Error & 20\% & 50\% & 100\% & 20\% & 50\% & 100\%\\
+\midrule
+clean data & \multicolumn{3}{c}{$28.5$} & \multicolumn{3}{c}{$91.0$}\\
+wrong left turn & $29.2$ & $32.2$ & $28.2$ & $91.0$ & $84.1$ & $\mathbf{76.2}$\\
+wrong right turn & $31.2$ & $29.9$ & $30.0$ & $88.9$ & $83.7$ & $75.6$\\
+speed too fast & $37.6$ & $35.5$ & $25.1$ & $91.5$ & $95.8$ & $97.2$\\
+delayed turn & $61.7$ & $\mathbf{68.3}$ & $\mathbf{83.1}$ & $84.8$ & $87.6$ & $88.2$\\
+wall hugging & $38.2$ & $\mathbf{46.7}$ & $\mathbf{61.9}$ & $90.6$ & $87.2$ & $\mathbf{78.1}$\\
+missing recovery & $44.2$ & $\mathbf{59.6}$ & $\mathbf{67.5}$ & $89.3$ & $\mathbf{82.9}$ & $\mathbf{75.0}$\\
+\bottomrule
+\end{tabular}
+\caption{Collision and success rate as the corrupted share grows, mean over five seeds. Bold marks a difference
+from clean BC larger than twice the larger seed standard deviation.}
+\label{tab:dose}
+\end{table}
+
+Table~\ref{tab:dose} and Figure~\ref{fig:dose} follow each error from a fifth of the trips to all of them.
+Delayed turn, missing recovery and wall hugging all get worse as the corrupted share grows, reaching 83\%, 68\%
+and 62\% wall contact at 100\%. Wall hugging clears the midterm's rule from 50\% on, and with intervals it is
+solid from 50\% as well; only at 20\% does it fall short of the Holm correction.
+
+Wrong turns never raise wall contact at any share, but they do lower success, from about 90\% to about 76\% at
+100\% for both turns, and that drop is solid under the same tests as Table~\ref{tab:stats}. The failed trips run
+out of time about one cell from the goal after travelling about 10 units, so the policy gets lost rather than
+hitting walls. The null collision result for wrong turns at 20\% therefore does not mean wrong turns are
+harmless, only that this particular outcome does not show the damage at that share.
+
+Speed too fast helps once it is the only speed in the data. At 100\% it gives the highest success of any policy
+in the study, 97\%, with the shortest trips at 194 steps and the fewest wall contacts at 25\%. A speed cap of 3.0
+is a valid faster driving style on this maze, and it costs collisions only when it is mixed with the normal speed
+of 2.0, as it is in the main comparison.
+
+\subsection{The same amount of wrong data for every error}
+
+\begin{figure}[tbp]
+\centering
+\includegraphics[width=\columnwidth]{brick7_matched.png}
+\caption{Change in collision rate against clean BC when every error is cut to about 2{,}200 wrong steps. The grey
+band is twice the clean seed spread, the midterm's descriptive rule.}
+\label{fig:matched}
+\end{figure}
+
+At a 20\% corrupted share the wrong turns and missing recovery carry about 2{,}100 to 2{,}300 wrong steps, while
+delayed turn, speed too fast and wall hugging carry 10{,}600 to 17{,}000. Cutting the three larger ones down to
+the first 20, 17 and 11 of their usual 100 flawed trips brings all six errors to about 2{,}200 wrong steps each.
+Table~\ref{tab:matched} and Figure~\ref{fig:matched} compare them at that matched exposure.
+
+\begin{table}[tbp]
+\centering\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Error (matched) & Error steps & Collisions (\%) & Change\\
+\midrule
+clean data & 0 & $28.5$ & \\
+wrong left turn & 2{,}100 & $29.2$ & $+0.7$\\
+wrong right turn & 2{,}225 & $31.2$ & $+2.7$\\
+missing recovery & 2{,}290 & $\mathbf{44.2}$ & $\mathbf{+15.7}$\\
+delayed turn (20 trips) & 2{,}205 & $36.8$ & $+8.3$\\
+speed too fast (17 trips) & 2{,}176 & $31.3$ & $+2.8$\\
+wall hugging (11 trips) & 2{,}307 & $34.7$ & $+6.2$\\
+\bottomrule
+\end{tabular}
+\caption{Collision rate with every error carrying about the same number of wrong steps.}
+\label{tab:matched}
+\end{table}
+
+Missing recovery is the only error that clears the midterm's rule at matched exposure, and by this measure it is
+the most harmful error in the study, costing about 7 points of wall contact per 1{,}000 wrong steps. Most of the
+delayed turn's effect in Table~\ref{tab:stats} came from its larger volume of wrong data: cut to the same
+exposure as a wrong turn, its effect drops from $+33.2$ to $+8.3$ points. It still ranks second at matched
+exposure, ahead of wall hugging, speed too fast and the two wrong turns, though with only five seeds that gap is
+itself borderline.
+
+This result sharpens, rather than contradicts, Section~\ref{sec:stats}. Delayed turn earns its solid rank partly
+from how often it repeats inside a flawed trip, while missing recovery earns the same rank from a single
+occurrence per trip, which is the more surprising of the two findings and the one Equation~\eqref{eq:bias} does
+not explain on its own.
+
+\subsection{Pairs of errors and the mixed dataset}
+
+\begin{figure}[tbp]
+\centering
+\includegraphics[width=\columnwidth]{brick7_pairs.png}
+\caption{Each pair of errors against the sum of the damage its two single errors do on their own. A blue bar
+below its grey partner is a pair that hurts less than its parts added together.}
+\label{fig:pairs}
+\end{figure}
+
+A pair dataset puts both errors on the same 100 flawed trips, so the corrupted share stays at 20\%. The mixed
+dataset gives each of the 100 flawed trips one of the six errors in turn. The interaction on collision rate is
+$I=m_{A+B}-m_A-m_B+m_{\text{clean}}$, which is zero when the damage adds up, above zero when the pair hurts more
+than its parts and below zero when it hurts less. Figure~\ref{fig:pairs} puts each pair against the sum of its
+two single errors, and Table~\ref{tab:pairs} gives the interaction with its intervals.
+
+\begin{table}[tbp]
+\centering\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Pair or mixture & Coll.\ (\%) & $I$ & 95\% interval\\
+\midrule
+delayed turn + missing recovery & $63.1$ & $-14.3$ & $[-27.3,-2.5]$\\
+delayed turn + wall hugging & $63.5$ & $-7.9$ & $[-17.2,+1.5]$\\
+missing recovery + speed too fast & $46.3$ & $-7.0$ & $[-19.3,+4.6]$\\
+mixed, less average of six singles & $48.1$ & $+7.8$ & $[+1.9,+13.4]$\\
+\bottomrule
+\end{tabular}
+\caption{Interaction on collision rate, with the paired bootstrap interval of Section~\ref{sec:stats}. The seed
+matched intervals are $[-30.3,+1.7]$, $[-18.2,+2.4]$, $[-21.9,+7.9]$ and $[+2.0,+13.5]$ in the same order. All
+three pairs are below additive; the mixed dataset is above the average single error in both intervals, with all
+five seeds agreeing.}
+\label{tab:pairs}
+\end{table}
+
+No pair makes the damage worse than its parts added together. Delayed turn with missing recovery is the clearest
+case, below additive in the bootstrap interval though not in the seed interval alone: that pair touches a wall on
+63\% of trips, close to delayed turn by itself. Two things push in this direction. Wall contact is a yes or no
+outcome per trip, so a trip that already hits a wall from one error cannot count again for the other, and packing
+both errors into the same 100 trips leaves fewer total wrong steps, 10{,}802, than the two single datasets hold
+between them, 12{,}907.
+
+The mixed dataset hurts more than the average single error dataset, 48.1\% wall contact against 40.3\%, a gap
+that excludes zero in both the bootstrap and the seed interval. One reading is that the dose curves in
+Section~\ref{sec:dose} are steepest at small corrupted shares, so six errors on about 17 trips each add up to
+more damage than one error on 100 trips. That reading is a hypothesis, not yet tested directly.
+
+\subsection{Efficiency counted over all trips}
+The path efficiency reported above is measured on completed trips only (Section~\ref{sec:metrics}), so a policy
+that fails its hardest trips can look efficient on the trips it keeps. The measure in Equation~\eqref{eq:effall} scores a failed trip as zero,
+and clean BC scores 80.7 on that scale.
+
+\begin{table}[tbp]
+\centering\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Error & Change at 20\% & Change at 100\%\\
+\midrule
+delayed turn & $\mathbf{-13.2}$ & $-21.6$\\
+wall hugging & $-1.4$ & $-23.7$\\
+missing recovery & $-2.8$ & $-21.8$\\
+wrong right turn & $-2.9$ & $-19.5$\\
+wrong left turn & $-2.9$ & $-19.4$\\
+speed too fast & $+1.4$ & $+9.8$\\
+\bottomrule
+\end{tabular}
+\caption{Change in efficiency over all 200 trips against clean BC (80.7). Bold marks the one change at 20\% that
+is solid under the tests of Section~\ref{sec:stats}.}
+\label{tab:effall}
+\end{table}
+
+Table~\ref{tab:effall} gives the change against that baseline. At 20\% the delayed turn is the only error that
+moves this measure by a solid margin. At 100\% every error except speed too fast costs about 20 points on this
+scale, including the two wrong turns, which never raise wall contact yet lose as much ground here as the errors
+that do. Speed too fast gains on both efficiency measures, consistent with it being a working faster style rather
+than a mistake.
+
+\subsection{Generalization to routes the training data never contained}\label{sec:generalization}
+
+\begin{table}[tbp]
+\centering\footnotesize
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& Seen & Unseen\\
+& (114 trips) & (86 trips)\\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Clean BC}}\\
+\quad success & $90.9\%$ & $91.2\%$\\
+\quad wall contact & $27.4\%$ & $30.0\%$\\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Change in wall contact at 20\%}}\\
+\quad delayed turn & $+32.6$ & $+34.0$\\
+\quad missing recovery & $+16.5$ & $+14.7$\\
+\quad wall hugging & $+11.4$ & $+7.4$\\
+\quad speed too fast & $+9.8$ & $+8.1$\\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Change in success at 100\%}}\\
+\quad wrong left turn & $-15.4$ & $-14.0$\\
+\quad wrong right turn & $-17.0$ & $-13.3$\\
+\quad speed too fast & $+7.7$ & $+4.2$\\
+\bottomrule
+\end{tabular}
+\caption{Clean BC and the change against it, split by whether the test trip's start and goal pair appeared in
+training. The full table for all 26 datasets is in \texttt{results/generalization.csv} \cite{repo}.}
+\label{tab:gen}
+\end{table}
+
+Table~\ref{tab:gen} scores the two halves of the split described in Section~\ref{sec:gen-method}, side by side.
+Clean BC drives both halves about equally well, 90.9\% against 91.2\% success and 27.4\% against 30.0\% wall
+contact, which is what we would expect from a policy that learned to drive the maze rather than to replay
+memorized routes.
+
+Every ranking from Table~\ref{tab:stats} holds on the unseen half: delayed turn stays by far the worst, missing
+recovery second, and no error changes sign. The benefit of the fast speed at 100\% survives too, with success
+above clean BC and wall contact below it on pairs the training data never contained. Together with the dose and
+matched exposure results, this is why this section opens with delayed turn and missing recovery rather than
+treating all six errors as equally established: those two are the only ones that pass the statistical tests, the
+matched exposure check and the generalization check at once.
+
+\subsection{Diagnosis: naming the error from the policy's own rollouts}
+
+\begin{figure*}[tbp]
+\centering
+\includegraphics[width=0.84\textwidth]{brick8_confusion.png}
+\caption{Confusion matrices for the six class classifier, logistic regression: the main run at a 20\% corrupted
+share (left) and the pooled run across all three shares (right).}
+\label{fig:confusion}
+\end{figure*}
+
+\begin{table}[tbp]
+\centering\footnotesize
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Run & Pol. & Chance & Logistic & Forest\\
+\midrule
+Six errors at 20\% (main) & 30 & 16.7\% & $\mathbf{83.3\%}$ & $56.7\%$\\
+Same, wrong turns merged & 30 & & $90.0\%$ & $60.0\%$\\
+All three shares (pooled) & 90 & 16.7\% & $80.0\%$ & $74.4\%$\\
+Same, wrong turns merged & 90 & & $90.0\%$ & $90.0\%$\\
+Clean as a seventh class & 35 & 14.3\% & $60.0\%$ & $54.3\%$\\
+\bottomrule
+\end{tabular}
+\caption{Error type classification accuracy, leave one seed out.}
+\label{tab:classify}
+\end{table}
+
+Table~\ref{tab:classify} gives the accuracy of every run and Figure~\ref{fig:confusion} shows which errors get
+mistaken for which. Speed too fast, delayed turn and missing recovery leave a clear trace: all 5 policies of each
+were named correctly in the main run, and 15 of 15, 14 of 15 and 15 of 15 when the shares are pooled. The two
+wrong turns are mostly confused with each other, 1 of 5 each way in the main run and 9 of 15 and 10 of 15 correct
+when pooled; counting them as one class raises the pooled score to 90\% for both models. Wall hugging sits close
+to the wrong turns, 3 of 5 correct, with both misses called wrong right, which fits its collision rate of 38.2\%
+sitting between those of the wrong turns, 29.2\% and 31.2\%.
+
+Dropping any single one of the eight input features never costs more than 20 points of accuracy, so no one number
+carries the result; dropping the collision rate costs the most, at 20 points. With only 30 policies the random
+forest falls to 56.7\%, mostly on the wrong turns and wall hugging, and catches up once the pooled run gives it
+three times the data. Shuffling the labels 300 times and scoring the same way gives 11.3\% on average and 33.3\%
+at best, well below the 83.3\% main result.
+
+\begin{table}[tbp]
+\centering\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Held out share & Logistic & Turns merged & Forest\\
+\midrule
+20\% & $63.3\%$ & $70.0\%$ & $60.0\%$\\
+50\% & $90.0\%$ & $96.7\%$ & $80.0\%$\\
+100\% & $66.7\%$ & $83.3\%$ & $66.7\%$\\
+All three together & $\mathbf{73.3\%}$ & $83.3\%$ & $68.9\%$\\
+\bottomrule
+\end{tabular}
+\caption{Accuracy when the model trains on two of the three corrupted shares and four seeds, and is tested on the
+third share's held out fifth seed. Chance is 16.7\%.}
+\label{tab:dose-classify}
+\end{table}
+
+Naming the error at a corrupted share never seen in training still works far above chance
+(Table~\ref{tab:dose-classify}), at 73.3\% overall and 83.3\% with the wrong turns merged. The 50\% share is the
+easy one to hold out, since the classifier only has to interpolate between 20\% and 100\%; the two ends cost
+about 25 points more, since they have to be extrapolated to.
+
+\begin{table}[tbp]
+\centering\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Model & Clean found & Flawed found & Balanced acc.\\
+\midrule
+Logistic regression & 3 of 5 & $73.3\%$ & $66.7\%$\\
+Random forest & 0 of 5 & $93.3\%$ & $46.7\%$\\
+\bottomrule
+\end{tabular}
+\caption{Clean against flawed as a first stage, 5 clean and 30 flawed policies, classes weighted equally. Chance
+for balanced accuracy is 50\%.}
+\label{tab:stage1}
+\end{table}
+
+Telling a clean policy from a flawed one is the weak link (Table~\ref{tab:stage1}). Logistic regression sits a
+little above chance and the forest sits at it, and with only five clean policies each one found or missed moves
+that column by 20 points. Naming which mistake trained a flawed policy is the part that works; deciding whether
+there was a mistake at all is not yet usable on its own.
+
+\subsection{Discussion}
+The midterm predicted that navigation mistakes would hurt more than speed mistakes. The completed data does not
+support that grouping: the most harmful error, the delayed turn, and the two with the weakest effect at 20\%, the
+wrong turns, are all navigation mistakes.
+
+The split that the data does support is consistent with Equation~\eqref{eq:bias}. A delayed turn repeats at every
+corner of a flawed trip and always pushes in the direction of travel, so its bias term adds up across many
+states. A wrong turn happens once per trip, into a different corridor each time, so its bias term cancels on
+average. The fast speed error sits outside this account for a different reason: its bias term is consistent, but
+it points toward a policy that is simply faster, which the metrics reward rather than punish once no slower speed
+remains in the data to contradict it.
+
+Missing recovery does not fit the account cleanly. It happens once per trip in a random direction, like a wrong
+turn, yet Table~\ref{tab:stats} and Table~\ref{tab:matched} both call it solid and the most harmful error per
+wrong step in the study. One reading, still a hypothesis and not tested directly here, is that it works through a
+different mechanism than the bias term: the data shows the ball drifting off its route but never shows how to get
+back, so the policy has no example of recovering once it drifts. That is the opposite of what DART's recovery
+labels provide \cite{dart}, and it suggests the quantity that matters for this error is the absence of a
+behavior rather than the presence of a wrong action. The super additive interaction of the mixed dataset in
+Table~\ref{tab:pairs} is a hypothesis of the same standing, pending the dose curve reading given in
+Section~\ref{sec:dose}.
+
+%=======================================================================
+\FloatBarrier
+\section{Limitations}\label{sec:limitations}
+
+The study uses one maze, PointMaze Medium, and one behavior cloning network, so the results say nothing about
+other layouts or other learners. The unseen test trips in Section~\ref{sec:generalization} are new start and goal
+pairs inside that same maze, and every cell appears in training as both a start and a goal, so that check tests
+new routes rather than a new layout.
+
+Five policies against five put a floor of 0.0079 under any permutation p value in this study, and 0.048 after the
+correction for six errors. Delayed turn and missing recovery sit exactly at that floor, so nothing here can
+report a smaller p value without more training seeds. The permutation test further assumes the ten training runs
+it reshuffles are independent of each other, while the five seed numbers are shared across every dataset and set
+the same starting weights and minibatch order each time, which makes the runs matched by seed rather than ten
+unrelated draws. The seed matched interval uses that matching directly and both solid results pass it as well,
+but the permutation p value by itself rests on treating the runs as independent. Five seeds per dataset also
+limits the diagnosis classifier, where one wrong prediction moves a score by 3.3 points.
+
+Every model is the one reached after 120 epochs, with no validation split and no checkpoint selection, and the
+epoch count was set by looking at clean data success on the test trips themselves
+(Section~\ref{sec:training}). Only 84 of the 100 flawed wrong left trips and 89 of the 100 wrong right trips
+contain the mistake, so the effective share of trips carrying those two mistakes is a little below the nominal
+20\%. Every condition uses one corrupted dataset built from one draw of which trips to spoil, and the five seeds
+vary the training run rather than that draw, so these numbers do not say how much a different draw of the same
+20\% would move them.
+
+Finally, the established results of this report are the ones called solid in Section~\ref{sec:stats}. The dose
+curve reading of the mixed dataset's interaction and the recovery based reading of why missing recovery hurts are
+hypotheses that this study did not test directly.
+
+%=======================================================================
+\section{Conclusion}
+
+Across 130 trained policies, two of six demonstration mistakes hold up under a permutation test, a paired
+bootstrap interval and a seed matched interval at once, and continue to hold on maze routes the training data
+never contained: a delayed turn that repeats at every corner, and a missing recovery step that removes the only
+examples of returning to the route. The other four mistakes are either dose dependent, as the wrong turns and
+wall hugging are, beneficial on their own, as the fast speed is, or simply weaker at the corrupted share we
+studied most closely. No pair of mistakes hurts more than the sum of its parts, while spreading all six across
+one dataset does. A classifier that sees only a policy's own test rollouts, never its training data, names which
+of six mistakes trained it well above chance and keeps most of that accuracy at a corruption strength it never
+trained on, though it cannot yet say whether a policy was trained on flawed data at all.
+
+For a practitioner holding a limited cleaning budget, the ranking here points at demonstrations that turn late
+and at demonstrations with their recoveries missing, and suggests that an occasional wrong corridor can be left
+alone at a low corrupted share. What remains open is listed in Section~\ref{sec:limitations} rather than
+attempted here: repeating the two solid findings with an independent draw of which trips are spoiled, testing a
+second maze layout, and adding a validation split to any future training run on this codebase. None of these
+change what this report can already say about the two findings it leads with. At the sample size this study could
+afford, a delayed turn and a missing recovery step are the two demonstration mistakes that this maze and this
+behavior cloning policy cannot absorb.
+
+\section*{Contributions}
+Abhishek Tyagi led the method, the statistical testing, the generalization check, the diagnosis classifier and
+this report. Nishad Gupta ran the training sweeps across datasets and seeds and built the dose and matched
+exposure figures. Richard Li built the rollout features behind the diagnosis classifier and contributed to the
+related work review and the project's presentation materials. Code, data and every number in this report are
+public \cite{repo}.
+
+%=======================================================================
+\begin{thebibliography}{99}
+\bibitem{pomerleau} D. A. Pomerleau, ``ALVINN: An autonomous land vehicle in a neural network,'' in \emph{NeurIPS}, 1989.
+\bibitem{ross2010} S. Ross and J. A. Bagnell, ``Efficient reductions for imitation learning,'' in \emph{AISTATS}, 2010.
+\bibitem{dagger} S. Ross, G. Gordon and J. A. Bagnell, ``A reduction of imitation learning and structured prediction to no regret online learning,'' in \emph{AISTATS}, 2011.
+\bibitem{dart} M. Laskey, J. Lee, R. Fox, A. Dragan and K. Goldberg, ``DART: Noise injection for robust imitation learning,'' in \emph{CoRL}, 2017.
+\bibitem{robomimic} A. Mandlekar et al., ``What matters in learning from offline human demonstrations for robot manipulation,'' in \emph{CoRL}, 2021.
+\bibitem{belkhale} S. Belkhale, Y. Cui and D. Sadigh, ``Data quality in imitation learning,'' in \emph{NeurIPS}, 2023.
+\bibitem{wu2019} Y. Wu et al., ``Imitation learning from imperfect demonstration,'' in \emph{ICML}, 2019.
+\bibitem{sasaki} F. Sasaki and R. Yamashina, ``Behavioral cloning from noisy demonstrations,'' in \emph{ICLR}, 2021.
+\bibitem{trex} D. S. Brown, W. Goo, P. Nagarajan and S. Niekum, ``Extrapolating beyond suboptimal demonstrations via inverse reinforcement learning from observations,'' in \emph{ICML}, 2019.
+\bibitem{natarajan} N. Natarajan, I. S. Dhillon, P. Ravikumar and A. Tewari, ``Learning with noisy labels,'' in \emph{NeurIPS}, 2013.
+\bibitem{hendrycks} D. Hendrycks and T. Dietterich, ``Benchmarking neural network robustness to common corruptions and perturbations,'' in \emph{ICLR}, 2019.
+\bibitem{florence} P. Florence et al., ``Implicit behavioral cloning,'' in \emph{CoRL}, 2021.
+\bibitem{d4rl} J. Fu, A. Kumar, O. Nachum, G. Tucker and S. Levine, ``D4RL: Datasets for deep data driven reinforcement learning,'' arXiv:2004.07219, 2020.
+\bibitem{gymrobotics} Farama Foundation, ``Gymnasium Robotics: Point Maze,'' robotics.farama.org, 2024.
+\bibitem{repo} A. Tyagi, N. Gupta and R. Li, ``ImitationLearning\_ErrorStudy,'' GitHub repository, 2026. \url{https://github.com/AbhishekTyagi404/ImitationLearning_ErrorStudy}
+\bibitem{adam} D. P. Kingma and J. Ba, ``Adam: A method for stochastic optimization,'' in \emph{ICLR}, 2015.
+\bibitem{holm} S. Holm, ``A simple sequentially rejective multiple test procedure,'' \emph{Scandinavian Journal of Statistics}, vol. 6, no. 2, 1979.
+\bibitem{efron} B. Efron and R. Tibshirani, \emph{An Introduction to the Bootstrap}. Chapman and Hall/CRC, 1993.
+\bibitem{breiman} L. Breiman, ``Random forests,'' \emph{Machine Learning}, vol. 45, no. 1, 2001.
+\end{thebibliography}
+
+\end{document}
