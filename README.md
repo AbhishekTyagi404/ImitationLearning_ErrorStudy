@@ -192,7 +192,8 @@ about 2,200 error steps each by corrupting only the first 20, 17 and 11 of the u
 * **Most of the delayed turn's damage came from its amount.** Its effect drops from +33.2 to +8.3 points
   at the same number of error steps as a wrong turn. It still ranks second, ahead of wall hugging, speed
   too fast and the two wrong turns, but none of these pass the rule at this amount. With intervals the
-  delayed turn is borderline (see the Statistics section).
+  delayed turn clears both, but its permutation p value (0.056) stays just above 0.05 (see the Statistics
+  section).
 
 ### Pairs of errors and the mixed dataset
 
@@ -342,9 +343,11 @@ whenever the other dataset has five.
 * **A paired permutation test** is the matched version, added after a reviewer asked for it. Seed s of a
   dataset and seed s of clean BC form a pair, and the label inside each pair is flipped in every possible
   way: 1,024 assignments at ten seeds, 32 at five. It respects the pairing the unpaired test assumes
-  away, at a cost in resolution.
-* **A paired bootstrap** gives the interval. Each of 10,000 draws picks 200 trip positions once and
-  applies them to every dataset, so the trips stay paired, and picks the training seeds with replacement.
+  away, at a cost in resolution. It is exact under one assumption: with no real effect, each pair's
+  difference is as likely to come out positive as negative.
+* **A paired bootstrap** gives the interval. Each of 10,000 draws picks 200 trip positions and a set of
+  seed numbers, both with replacement, and applies the same draw to the dataset and to clean BC, so the
+  trips and the seeds both stay paired: seed s always meets seed s.
 * **A seed t interval** is the matched check: seed s of a dataset against seed s of clean BC, one
   difference per seed, a t interval.
 
@@ -367,12 +370,12 @@ the Holm corrected p value must be below 0.05 too. The left panel has ten seeds,
 
 | Error at 20%, ten seeds | Collision change | Bootstrap interval | Seed interval | Unpaired p | Holm p | Paired p | Holm p (paired) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Delayed turn | +29.75 | 23.85 to 35.75 | 24.21 to 35.29 | < 0.001 | < 0.001 | 0.002 | 0.012 |
-| Missing recovery | +14.30 | 8.00 to 20.70 | 9.25 to 19.35 | < 0.001 | < 0.001 | 0.002 | 0.012 |
-| Wall hugging | +10.95 | 4.25 to 17.75 | 6.07 to 15.83 | 0.001 | 0.005 | 0.002 | 0.012 |
-| Speed too fast | +6.15 | −0.70 to 13.20 | −0.87 to 13.17 | 0.072 | 0.217 | 0.084 | 0.252 |
-| Wrong right turn | −0.15 | −6.70 to 6.60 | −7.86 to 7.56 | 0.974 | 1.000 | 0.979 | 1.000 |
-| Wrong left turn | 0.00 | −6.50 to 7.00 | −7.65 to 7.65 | 1.000 | 1.000 | 1.000 | 1.000 |
+| Delayed turn | +29.75 | 23.70 to 36.00 | 24.21 to 35.29 | < 0.001 | < 0.001 | 0.002 | 0.012 |
+| Missing recovery | +14.30 | 8.50 to 20.55 | 9.25 to 19.35 | < 0.001 | < 0.001 | 0.002 | 0.012 |
+| Wall hugging | +10.95 | 5.60 to 16.60 | 6.07 to 15.83 | 0.001 | 0.005 | 0.002 | 0.012 |
+| Speed too fast | +6.15 | −0.75 to 12.95 | −0.87 to 13.17 | 0.072 | 0.217 | 0.084 | 0.252 |
+| Wrong right turn | −0.15 | −7.25 to 7.25 | −7.86 to 7.56 | 0.974 | 1.000 | 0.979 | 1.000 |
+| Wrong left turn | 0.00 | −6.90 to 7.70 | −7.65 to 7.65 | 1.000 | 1.000 | 1.000 | 1.000 |
 
 * **Delayed turn, missing recovery and wall hugging are solid on every test.** All three reach the paired
   floor of 0.002, which means all ten seed differences share a sign and no relabeling of the pairs gives a
@@ -387,7 +390,8 @@ the Holm corrected p value must be below 0.05 too. The left panel has ten seeds,
   Wall hugging loses 12.9 at 100%. Speed too fast gains 6.2 at 100%. At 50%, wrong left (−6.9) clears
   both intervals, while wrong right (−7.3) holds only in the bootstrap.
 * **Equal amounts (five seeds).** Missing recovery stays the one error clearly above zero. Delayed turn cut
-  to 20 trips is borderline (bootstrap 0.0 to 17.2, seed interval 2.7 to 13.9).
+  to 20 trips clears both intervals (bootstrap 2.0 to 14.7, seed interval 2.7 to 13.9), but its unpaired
+  p value is 0.056, so it stays just short of the third bar.
 
 **Efficiency counted over all trips.** The path efficiency in the results tables above is measured on
 completed trips only, so a policy that fails its hardest trips can look efficient on the ones that are
@@ -415,18 +419,21 @@ involved.
 
 | Pair | Interaction (points) | Seed interval | Bootstrap interval |
 | --- | --- | --- | --- |
-| delayed_turn + missing_recovery | −14.3 | −30.3 to +1.7 | −27.4 to −2.7 |
+| delayed_turn + missing_recovery | −14.3 | −30.3 to +1.7 | −27.6 to −2.7 |
 | delayed_turn + wall_hugging | −7.9 | −18.2 to +2.4 | −17.4 to +1.5 |
-| missing_recovery + speed_fast | −7.0 | −21.9 to +7.9 | −19.1 to +4.9 |
-| mixed minus average of the six single errors | +7.8 | +2.0 to +13.5 | +2.0 to +13.5 |
+| missing_recovery + speed_fast | −7.0 | −21.9 to +7.9 | −19.3 to +4.8 |
+| mixed minus average of the six single errors | +7.8 | +2.0 to +13.5 | +1.9 to +13.4 |
 
 No pair is clearly above additive. The first pair is below additive in the bootstrap but not in the seed
 interval. The mixed dataset is above the average of the singles in both, and all five seeds agree (+1.3
 to +12.5). Only the six single errors at 20% are corrected for multiple comparisons; the dose, matched
 and pair rows show raw intervals. Those rows rest on five seeds, so their seed part is estimated roughly,
-and bootstrap intervals tend to run a little narrow. The bootstrap columns moved by a tenth or two
-against the five seed version of this table: the script now draws seeds separately for each comparison,
-which changes the random draws. The seed intervals did not move. `results/brick9_changes.csv`, `results/brick9_interactions.csv` and
+and bootstrap intervals tend to run a little narrow. On November 27 a reviewer pointed out that the
+bootstrap drew the seeds of clean BC and of the flawed dataset in two separate draws, which broke the seed
+pairing. It now uses one seed draw for both sides. That moved the bootstrap edges by up to about 1.5
+points and did not move any change, any p value or any seed interval; the three solid errors are
+unaffected. Two five seed results now clear both intervals where they did not before: delayed turn cut
+to 20 trips (collisions) and the mixed dataset (success, −4.9, bootstrap −8.7 to −0.9). `results/brick9_changes.csv`, `results/brick9_interactions.csv` and
 `results/brick9_seed_results.csv` hold every interval and the score of every policy.
 
 ## Generalization: routes the training data never contained (November 24, 2026)

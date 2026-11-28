@@ -410,19 +410,22 @@ difference is at least as large in size as the observed one. This respects the p
 resolution. At ten seeds the smallest p value it can return is $2/1{,}024\approx0.002$, or $0.012$ after Holm
 correction for six errors, so it can certify a result. At five seeds the floor is $2/32=0.0625$, or $0.375$ after
 correction, so it cannot certify anything at the 0.05 level however large the effect. That limit is why the main
-comparison was rerun with ten seeds.
+comparison was rerun with ten seeds. The test is exact under a sign symmetry assumption: with no real effect,
+each pair's difference is as likely to come out positive as negative.
 
 \subsubsection{Paired bootstrap interval}
 Each of 10{,}000 draws samples the 200 test trip positions once, with replacement, and applies that same sample
-to every dataset, keeping the trips paired, then separately samples the training seeds with replacement. The
+to the dataset and to clean BC, keeping the trips paired, and samples the seed numbers with replacement in the
+same way, one draw for both sides, so seed $s$ of a dataset always meets seed $s$ of clean BC. The
 2.5th and 97.5th percentiles of the resulting differences give a 95\% interval. Its own p value, read from where
 the interval sits relative to zero, is reported but not used for the Holm correction, since it answers a
 different question than the permutation p value.
 
 \subsubsection{Seed matched interval}
 For dataset $X$ and seed $s$ we take the difference between $X$'s seed $s$ policy and clean BC's seed $s$ policy,
-giving one matched difference per seed, and compute a classic $t$ interval from them. This check uses the shared
-seed numbers directly rather than discarding them, and does not require treating the runs as exchangeable.
+giving one matched difference per seed, and compute a classic $t$ interval from them. Where the bootstrap
+resamples trips and seeds, this check holds the test trips fixed and asks only how much the matched differences
+vary from seed to seed, and it does not require treating the runs as exchangeable.
 
 Two bars are reported separately for every comparison, since they can disagree. The first asks whether the
 bootstrap interval and the seed matched interval both exclude zero. The second asks whether the permutation p
@@ -484,12 +487,12 @@ relabeling of the pairs gives a larger mean difference; after correction for six
 \cmidrule(lr){5-6}\cmidrule(lr){7-8}
 Error (20\% of trips) & Change & Bootstrap 95\% & Seed 95\% & $p$ & Holm $p$ & $p$ & Holm $p$ & intervals & sig.\\
 \midrule
-Delayed turn & $\mathbf{+29.75}$ & $[23.85,35.75]$ & $[24.21,35.29]$ & $<0.001$ & $\mathbf{<0.001}$ & $0.002$ & $\mathbf{0.012}$ & yes & yes\\
-Missing recovery & $\mathbf{+14.30}$ & $[8.00,20.70]$ & $[9.25,19.35]$ & $<0.001$ & $\mathbf{<0.001}$ & $0.002$ & $\mathbf{0.012}$ & yes & yes\\
-Wall hugging & $\mathbf{+10.95}$ & $[4.25,17.75]$ & $[6.07,15.83]$ & $0.001$ & $\mathbf{0.005}$ & $0.002$ & $\mathbf{0.012}$ & yes & yes\\
-Speed too fast & $+6.15$ & $[-0.70,13.20]$ & $[-0.87,13.17]$ & $0.072$ & $0.217$ & $0.084$ & $0.252$ & no & no\\
-Wrong left turn & $0.00$ & $[-6.50,7.00]$ & $[-7.65,7.65]$ & $1.000$ & $1.000$ & $1.000$ & $1.000$ & no & no\\
-Wrong right turn & $-0.15$ & $[-6.70,6.60]$ & $[-7.86,7.56]$ & $0.974$ & $1.000$ & $0.979$ & $1.000$ & no & no\\
+Delayed turn & $\mathbf{+29.75}$ & $[23.70,36.00]$ & $[24.21,35.29]$ & $<0.001$ & $\mathbf{<0.001}$ & $0.002$ & $\mathbf{0.012}$ & yes & yes\\
+Missing recovery & $\mathbf{+14.30}$ & $[8.50,20.55]$ & $[9.25,19.35]$ & $<0.001$ & $\mathbf{<0.001}$ & $0.002$ & $\mathbf{0.012}$ & yes & yes\\
+Wall hugging & $\mathbf{+10.95}$ & $[5.60,16.60]$ & $[6.07,15.83]$ & $0.001$ & $\mathbf{0.005}$ & $0.002$ & $\mathbf{0.012}$ & yes & yes\\
+Speed too fast & $+6.15$ & $[-0.75,12.95]$ & $[-0.87,13.17]$ & $0.072$ & $0.217$ & $0.084$ & $0.252$ & no & no\\
+Wrong left turn & $0.00$ & $[-6.90,7.70]$ & $[-7.65,7.65]$ & $1.000$ & $1.000$ & $1.000$ & $1.000$ & no & no\\
+Wrong right turn & $-0.15$ & $[-7.25,7.25]$ & $[-7.86,7.56]$ & $0.974$ & $1.000$ & $0.979$ & $1.000$ & no & no\\
 \bottomrule
 \end{tabular}
 \caption{Change in collision rate against clean BC, in points, for the six main errors at a 20\% corrupted share,
@@ -608,8 +611,8 @@ larger than twice the larger seed standard deviation, the midterm's descriptive 
 Table~\ref{tab:dose} and Figure~\ref{fig:dose} follow each error from a fifth of the trips to all of them.
 Delayed turn, missing recovery and wall hugging all get worse as the corrupted share grows, reaching 83\%, 68\%
 and 62\% wall contact at 100\%. Wall hugging clears the midterm's rule from 50\% on, and both of its intervals
-exclude zero at every share; at 20\% its effect falls short of the correction on these five seeds and clears it
-at ten (Table~\ref{tab:stats}).
+exclude zero at 50\% and 100\%; at 20\% its effect falls short of the correction on the first five seeds and
+clears every test at ten (Table~\ref{tab:stats}).
 
 Wrong turns never raise wall contact at any share, but they do lower success, from about 90\% to about 76\% at
 100\% for both turns, and that drop clears both intervals. The failed trips run
@@ -660,8 +663,8 @@ Missing recovery is the only error that clears the midterm's rule at matched exp
 the most harmful error in the study, costing about 7 points of wall contact per 1{,}000 wrong steps. Most of the
 delayed turn's effect came from its larger volume of wrong data: on the same five seeds, cut to the exposure of a
 wrong turn, its effect drops from $+33.2$ to $+8.3$ points. It still ranks second at matched
-exposure, ahead of wall hugging, speed too fast and the two wrong turns, though with only five seeds that gap is
-itself borderline.
+exposure, ahead of wall hugging, speed too fast and the two wrong turns. On five seeds that cut clears both
+intervals, but its unpaired p value of 0.056 stays just short of 0.05.
 
 This result sharpens, rather than contradicts, Section~\ref{sec:stats}. Delayed turn earns its solid rank partly
 from how often it repeats inside a flawed trip, while missing recovery earns the same rank from a single
@@ -690,10 +693,10 @@ two single errors, and Table~\ref{tab:pairs} gives the interaction with its inte
 \toprule
 Pair or mixture & Coll.\ (\%) & $I$ & 95\% interval\\
 \midrule
-delayed turn + missing recovery & $63.1$ & $-14.3$ & $[-27.4,-2.7]$\\
+delayed turn + missing recovery & $63.1$ & $-14.3$ & $[-27.6,-2.7]$\\
 delayed turn + wall hugging & $63.5$ & $-7.9$ & $[-17.4,+1.5]$\\
-missing recovery + speed too fast & $46.3$ & $-7.0$ & $[-19.1,+4.9]$\\
-mixed, less average of six singles & $48.1$ & $+7.8$ & $[+2.0,+13.5]$\\
+missing recovery + speed too fast & $46.3$ & $-7.0$ & $[-19.3,+4.8]$\\
+mixed, less average of six singles & $48.1$ & $+7.8$ & $[+1.9,+13.4]$\\
 \bottomrule
 \end{tabular}
 \caption{Interaction on collision rate on seeds 0 to 4, with the paired bootstrap interval of
@@ -792,7 +795,7 @@ within about two points of zero in both halves. The benefit of the fast speed at
 above clean BC on pairs the training data never contained. This is why this section opens with the three solid
 errors rather than treating all six as equally established: they are the only ones that pass both the
 statistical tests and the unseen route check. At matched exposure, on five seeds, missing recovery stands out
-alone, with delayed turn borderline and wall hugging short of the bars. What this check does not test is a new
+alone, with delayed turn clearing the intervals but not the permutation test and wall hugging short of both. What this check does not test is a new
 maze, since every cell of an unseen pair appears in training as both a start and a goal.
 
 \subsection{Diagnosis: naming the error from the policy's own rollouts}

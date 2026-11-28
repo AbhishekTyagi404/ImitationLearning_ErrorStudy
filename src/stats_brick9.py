@@ -5,26 +5,32 @@ Run:  python src/stats_brick9.py                    (reads results/trips)
 
 Three ways of measuring the same uncertainty, each with its own weakness:
 
-  permutation   The unpaired test. Five clean policies and five flawed ones are pooled and split
-                again in all 252 ways, with the test trips held fixed. The p value is the share of
-                splits whose gap is at least as large as the one we saw. With five against five the
-                smallest p value possible is 2/252 = 0.0079, so after Holm correction for six errors
-                nothing can fall below 0.048. These p values feed the main Holm correction. The test
-                treats the ten runs as exchangeable, which the shared seed numbers argue against.
-  paired perm.  The matched version of the same idea. Seed s of a dataset and seed s of clean BC are
-                a pair, and the label inside a pair is flipped in all 2^5 = 32 ways. It respects the
-                pairing, at the cost of resolution: the smallest p it can give is 2/32 = 0.0625 and
-                the smallest after Holm for six errors is 0.375, so at five seeds it cannot show
-                significance however large the effect. Reported beside the unpaired test so that the
-                limit of five seeds is visible rather than implied.
-  bootstrap     The interval. Each draw picks 200 trip positions once and applies them to every
-                dataset, so the trips stay paired, and picks five seeds with replacement. Its p value
-                comes from where the interval sits, which is not a null test, so it is reported but
-                not corrected.
-  seed t        The matched check. Seed s of a dataset against seed s of clean BC, five differences,
-                a t interval. It uses the shared seed numbers that the bootstrap throws away.
+Seed counts. Clean BC and the six errors at 20% have ten seeds (0 to 9); every other dataset has five
+(0 to 4). Every comparison uses the seeds both sides share, so a five seed dataset meets clean BC's
+seeds 0 to 4 and seed s always meets seed s.
 
-A result counts as solid when the bootstrap interval and the seed interval both exclude zero.
+  permutation   The unpaired test. The n clean policies and n flawed ones are pooled and split again
+                in every way, with the test trips held fixed: C(10,5) = 252 splits at five seeds,
+                C(20,10) = 184,756 at ten. The p value is the share of splits whose gap is at least as
+                large as the one we saw. The smallest p possible is 2/252 = 0.0079 at five seeds
+                (0.048 after Holm for six errors) and 2/184,756 at ten. These p values feed the main
+                Holm correction. The test treats the 2n runs as exchangeable, which the shared seed
+                numbers argue against, so the paired test below is reported beside it.
+  paired perm.  The matched version. Seed s of a dataset and seed s of clean BC are a pair, and the
+                sign of each pair's difference is flipped in every way: 2^5 = 32 assignments at five
+                seeds, 2^10 = 1,024 at ten. Its floor is 2/32 = 0.0625 at five seeds (0.375 after Holm,
+                so it cannot show significance there however large the effect) and 2/1,024 = 0.00195
+                at ten (0.0117 after Holm). It is exact under the assumption that, with no effect, each
+                pair's difference is as likely to come out positive as negative (sign symmetry).
+  bootstrap     The interval. Each draw picks 200 trip positions and n seed numbers with replacement
+                and applies the same draw to the dataset and to clean BC, so both the trips and the
+                seeds stay paired. Its p value comes from where the interval sits, which is not a null
+                test, so it is reported but not corrected.
+  seed t        The matched check. Seed s of a dataset against seed s of clean BC, n differences,
+                a t interval.
+
+The solid column of brick9_changes.csv marks a change whose bootstrap interval and seed interval both
+exclude zero. The report asks one more thing of a solid finding: an unpaired Holm p below 0.05.
 
 Metrics are the collision rate, the success rate and an efficiency over all 200 trips (the expert's
 distance over the policy's distance on a trip that reached the goal, zero on a trip that did not),
@@ -47,7 +53,6 @@ from scipy import stats
 
 SINGLE = ["wrong_left", "wrong_right", "speed_fast", "delayed_turn", "wall_hugging", "missing_recovery"]
 PAIRS = [("delayed_turn", "missing_recovery"), ("delayed_turn", "wall_hugging"), ("missing_recovery", "speed_fast")]
-SEEDS = 5          # the seed count every dataset has; the seven in MAIN may have more, see available_seeds
 MAIN = ["expert_clean"] + SINGLE
 KEY = ["start_row", "start_col", "goal_row", "goal_col"]
 METRICS = ["collision", "success", "efficiency_all"]
@@ -68,12 +73,12 @@ def sign_flips(n):
 
 
 def available_seeds(trips_dir, name):
-    """Seed numbers this dataset actually has a scored trip file for, in order."""
-    found = []
-    seed = 0
-    while (Path(trips_dir) / f"{name}_seed{seed}.csv").exists():
-        found.append(seed)
-        seed += 1
+    """Seed numbers this dataset has a scored trip file for, in order. They must run 0, 1, 2 and on with no
+    gap; a missing seed in the middle stops the script rather than being skipped without notice."""
+    found = sorted(int(p.stem.rsplit("_seed", 1)[1]) for p in Path(trips_dir).glob(f"{name}_seed*.csv")
+                   if p.stem.rsplit("_seed", 1)[0] == name and p.stem.rsplit("_seed", 1)[1].isdigit())
+    if found != list(range(len(found))):
+        raise FileNotFoundError(f"{name}: seed files {found} have a gap; expected 0 to {max(found)}")
     return found
 
 
@@ -137,18 +142,17 @@ def permutation_p(a, b):
 
 
 def paired_permutation_p(a, b):
-    """Exact two sided sign flip test over the five matched seed pairs.
+    """Exact two sided sign flip test over the n matched seed pairs.
 
-    The same five seed numbers set the starting weights and the batch order in every dataset, so
-    seed s of a flawed dataset and seed s of clean BC are a matched pair rather than two unrelated
-    draws. Under the null the label inside a pair carries no information, so each of the five
-    differences could have come out with either sign, which gives 2^5 = 32 assignments. The p value
-    is the share of those whose mean difference is at least as large in size as the one we saw.
+    The same seed numbers set the starting weights and the batch order in every dataset, so seed s of
+    a flawed dataset and seed s of clean BC are a matched pair rather than two unrelated draws. Under
+    the null each pair's difference is as likely to be positive as negative (sign symmetry), so each
+    of the n differences could have come out with either sign, which gives 2^n assignments: 32 at
+    five seeds, 1,024 at ten. The p value is the share of those whose mean difference is at least as
+    large in size as the one we saw. The test is exact under that sign symmetry assumption.
 
-    The smallest p this can return is 2/32 = 0.0625, and after Holm correction for six errors nothing
-    can fall below 6 x 0.0625 = 0.375, so at five seeds this test cannot reach significance however
-    large the effect is. It is reported beside the unpaired test because it respects the pairing that
-    the unpaired test assumes away; the two together say what five seeds can and cannot settle.
+    The smallest p this can return is 2/2^n: 0.0625 at five seeds (0.375 after Holm for six errors,
+    so it cannot reach significance there however large the effect) and 0.00195 at ten (0.0117).
     """
     a, b = matched(a, b)
     d = a.mean(1) - b.mean(1)
@@ -201,9 +205,8 @@ def changes(data, rng, draws):
                 continue
             arr, clean = matched(arr, clean_all)                    # seed s of each, as far as both go
             n = len(arr)
-            clean_boot = boot_mean(clean, trip_idx, rng.integers(0, n, size=(draws, n)))
-            seed_idx = rng.integers(0, n, size=(draws, n))
-            d = (boot_mean(arr, trip_idx, seed_idx) - clean_boot) * 100
+            seed_idx = rng.integers(0, n, size=(draws, n))          # one seed draw for both: seed s meets seed s
+            d = (boot_mean(arr, trip_idx, seed_idx) - boot_mean(clean, trip_idx, seed_idx)) * 100
             lo, hi = interval(d)
             per_seed = (arr.mean(1) - clean.mean(1)) * 100          # seed s against seed s of clean BC
             half = stats.t.ppf(0.975, n - 1) * per_seed.std(ddof=1) / np.sqrt(n)
@@ -323,7 +326,7 @@ def main():
 
     seed_rows = []
     for name in dataset_list():
-        for s in range(SEEDS):
+        for s in range(len(data["success"][name])):
             seed_rows.append({"dataset": name, "seed": s,
                               "success_rate": data["success"][name][s].mean() * 100,
                               "collision_rate": data["collision"][name][s].mean() * 100,
@@ -341,7 +344,7 @@ def main():
     print(f"Clean BC: success {data['success']['expert_clean'].mean() * 100:.1f}%, "
           f"collisions {data['collision']['expert_clean'].mean() * 100:.1f}%, "
           f"efficiency over all trips {data['efficiency_all']['expert_clean'].mean() * 100:.1f}"
-          f"  ({args.draws} bootstrap draws, 252 permutations)\n")
+          f"  ({args.draws} bootstrap draws; exact permutation tests)\n")
     cols = ["dataset", "seeds", "dataset_mean", "change", "ci_low", "ci_high", "seed_ci_low", "seed_ci_high",
             "p_permutation", "holm_p_six_errors", "p_paired_permutation", "holm_p_paired", "solid"]
     titles = {"collision": "collision rate", "success": "success rate",
