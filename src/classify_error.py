@@ -32,7 +32,7 @@ SINGLE = ["wrong_left", "wrong_right", "speed_fast", "delayed_turn", "wall_huggi
 LABEL = {"wrong_left": "Wrong left", "wrong_right": "Wrong right", "speed_fast": "Speed fast",
          "delayed_turn": "Delayed turn", "wall_hugging": "Wall hugging", "missing_recovery": "Missing recovery",
          "expert_clean": "Clean"}
-SEEDS = range(5)
+SEEDS = range(20)      # an upper bound; load() keeps the seeds that actually have a scored trip file
 STEP_CAP = 600
 FEATURES = ["success_rate", "collision_rate", "timeout_rate", "step_ratio", "speed", "path_efficiency",
             "end_dist_failed", "contact_steps_per_hit"]
@@ -74,13 +74,44 @@ def models():
     }
 
 
-def leave_one_seed_out(df, name):
+def seed_list(df):
+    """The seeds this frame actually holds. Datasets gained seeds 5 to 9 at the 20% dose, so the
+    rotation length is read from the data rather than fixed."""
+    return sorted(df.seed.unique())
+
+
+def leave_one_seed_out(df, name, features=None):
+    features = FEATURES if features is None else features
     pred = pd.Series(index=df.index, dtype=object)
-    for seed in SEEDS:
+    for seed in seed_list(df):
         train, test = df[df.seed != seed], df[df.seed == seed]
-        m = models()[name].fit(train[FEATURES], train.error)
-        pred[test.index] = m.predict(test[FEATURES])
+        m = models()[name].fit(train[features], train.error)
+        pred[test.index] = m.predict(test[features])
     return pred
+
+
+def shuffle_check(df, name="logistic", rounds=300, seed=0):
+    """The same leave one seed out run with the error labels shuffled, many times over. It shows what
+    accuracy these features reach when the labels carry no information, which is the floor the real
+    result has to clear. Used to be run by hand; it is part of the script so the number is reproducible."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(rounds):
+        shuffled = df.assign(error=rng.permutation(df.error.values))
+        out.append((leave_one_seed_out(shuffled, name).values == shuffled.error.values).mean() * 100)
+    return np.array(out)
+
+
+def drop_one_feature(df, name="logistic"):
+    """Accuracy with each of the eight features left out in turn, to see whether one number carries
+    the result. Used to be run by hand; it is part of the script so the number is reproducible."""
+    full = (leave_one_seed_out(df, name).values == df.error.values).mean() * 100
+    rows = []
+    for f in FEATURES:
+        keep = [x for x in FEATURES if x != f]
+        acc = (leave_one_seed_out(df, name, keep).values == df.error.values).mean() * 100
+        rows.append({"dropped": f, "accuracy": acc, "cost": full - acc})
+    return full, pd.DataFrame(rows).sort_values("cost", ascending=False)
 
 
 def confusion(truth, pred, classes):
@@ -110,22 +141,26 @@ def run(df, tag, classes):
 
 def heldout_dose(df, name="logistic"):
     """Train on two doses, test on the third. The test policy's seed is also left out of training, so the
-    model has seen neither that dose nor that seed. Fifteen fits (3 doses x 5 seeds)."""
+    model has seen neither that dose nor that seed. One fit per dose and seed that the data actually holds,
+    which is fifteen when every dose has five seeds and more once a dose gains seeds."""
     pred = pd.Series(index=df.index, dtype=object)
     for dose in sorted(df.dose.unique()):
-        for seed in SEEDS:
+        for seed in seed_list(df[df.dose == dose]):     # only the seeds this dose has
             train = df[(df.dose != dose) & (df.seed != seed)]
             test = df[(df.dose == dose) & (df.seed == seed)]
+            if train.empty or test.empty:
+                continue
             m = models()[name].fit(train[FEATURES], train.error)
             pred[test.index] = m.predict(test[FEATURES])
     return pred
 
 
 def stage_one(df, name="logistic"):
-    """Clean or flawed, leave one seed out, classes weighted equally (5 clean against 30 flawed policies)."""
+    """Clean or flawed, leave one seed out, classes weighted equally. Clean policies are outnumbered six to one
+    (one clean dataset against six flawed ones), so without the weighting the model would learn to say flawed."""
     y = (df.error != "expert_clean").map({True: "flawed", False: "clean"})
     pred = pd.Series(index=df.index, dtype=object)
-    for seed in SEEDS:
+    for seed in seed_list(df):
         train, test = df[df.seed != seed], df[df.seed == seed]
         model = models()[name]
         if name == "logistic":
@@ -217,10 +252,20 @@ def main():
     for tag in ("main", "pooled"):
         print(f"\nConfusion, {tag}, logistic regression (rows true, columns predicted):")
         print(pd.read_csv(f"results/brick8_confusion_{tag}_logistic.csv", index_col=0).to_string())
-    print("\nHold out a whole dose (train on two doses and four seeds, test on the third dose and fifth seed):")
+    print("\nHold out a whole dose (train on the other two doses with that seed left out, test on the held out "
+          "dose's policies of that seed):")
     print(held.round(1).to_string(index=False))
-    print("\nStage 1, clean or flawed (35 policies at 20%, leave one seed out, classes weighted equally):")
+    print(f"\nStage 1, clean or flawed ({len(detect_df)} policies at 20%, leave one seed out, "
+          f"classes weighted equally):")
     print(stage.round(1).to_string(index=False))
+    shuffled = shuffle_check(main_df, "logistic")
+    full, dropped = drop_one_feature(main_df, "logistic")
+    pd.DataFrame({"shuffled_accuracy": shuffled}).round(2).to_csv("results/brick8_shuffle.csv", index=False)
+    dropped.round(2).to_csv("results/brick8_drop_one_feature.csv", index=False)
+    print(f"\nLabel shuffle check, main run, logistic regression, {len(shuffled)} shuffles: "
+          f"mean {shuffled.mean():.1f}%, best {shuffled.max():.1f}%, real result {full:.1f}%")
+    print("\nDrop one feature, main run, logistic regression (cost = points of accuracy lost):")
+    print(dropped.round(1).to_string(index=False))
     print("\nFeature means at 20% by error:")
     print(main_df.groupby("error")[FEATURES].mean().round(3).to_string())
 

@@ -37,6 +37,7 @@ Writes:
   figures/brick9_intervals.png        change against clean BC with 95% intervals for the six errors
 """
 import argparse
+from functools import lru_cache
 from itertools import combinations, product
 from pathlib import Path
 
@@ -46,14 +47,40 @@ from scipy import stats
 
 SINGLE = ["wrong_left", "wrong_right", "speed_fast", "delayed_turn", "wall_hugging", "missing_recovery"]
 PAIRS = [("delayed_turn", "missing_recovery"), ("delayed_turn", "wall_hugging"), ("missing_recovery", "speed_fast")]
-SEEDS = 5
+SEEDS = 5          # the seed count every dataset has; the seven in MAIN may have more, see available_seeds
+MAIN = ["expert_clean"] + SINGLE
 KEY = ["start_row", "start_col", "goal_row", "goal_col"]
 METRICS = ["collision", "success", "efficiency_all"]
-# every way of splitting ten policies into two groups of five, for the unpaired permutation test
-LEFT = np.array(list(combinations(range(2 * SEEDS), SEEDS)))
-RIGHT = np.array([[i for i in range(2 * SEEDS) if i not in set(c)] for c in LEFT])
-# every way of flipping the label inside each of the five seed pairs, for the paired permutation test
-SIGNS = np.array(list(product([1, -1], repeat=SEEDS)))
+
+
+@lru_cache(maxsize=None)
+def splits(n):
+    """Every way of splitting 2n policies into two groups of n, for the unpaired permutation test."""
+    left = np.array(list(combinations(range(2 * n), n)))
+    right = np.array([[i for i in range(2 * n) if i not in set(c)] for c in left])
+    return left, right
+
+
+@lru_cache(maxsize=None)
+def sign_flips(n):
+    """Every way of flipping the label inside each of the n seed pairs, for the paired permutation test."""
+    return np.array(list(product([1, -1], repeat=n)))
+
+
+def available_seeds(trips_dir, name):
+    """Seed numbers this dataset actually has a scored trip file for, in order."""
+    found = []
+    seed = 0
+    while (Path(trips_dir) / f"{name}_seed{seed}.csv").exists():
+        found.append(seed)
+        seed += 1
+    return found
+
+
+def matched(a, b):
+    """Cut two policy arrays to the seeds they share, so seed s always meets seed s."""
+    n = min(len(a), len(b))
+    return a[:n], b[:n]
 
 
 def dataset_list():
@@ -82,7 +109,7 @@ def load(trips_dir):
     ref = None
     for name in dataset_list():
         rows = {m: [] for m in METRICS}
-        for seed in range(SEEDS):
+        for seed in available_seeds(trips_dir, name):
             t = pd.read_csv(Path(trips_dir) / f"{name}_seed{seed}.csv").sort_values("trip").reset_index(drop=True)
             if ref is None:
                 ref = t[KEY].copy()
@@ -101,9 +128,11 @@ def permutation_p(a, b):
     have been the flawed group. The p value is the share of the 252 splits whose gap is at least as
     large as the one we saw.
     """
+    a, b = matched(a, b)
+    left, right = splits(len(a))
     pool = np.concatenate([a.mean(1), b.mean(1)])
     observed = a.mean() - b.mean()
-    gaps = pool[LEFT].mean(1) - pool[RIGHT].mean(1)
+    gaps = pool[left].mean(1) - pool[right].mean(1)
     return float((np.abs(gaps) >= abs(observed) - 1e-12).mean())
 
 
@@ -121,9 +150,10 @@ def paired_permutation_p(a, b):
     large the effect is. It is reported beside the unpaired test because it respects the pairing that
     the unpaired test assumes away; the two together say what five seeds can and cannot settle.
     """
+    a, b = matched(a, b)
     d = a.mean(1) - b.mean(1)
     observed = d.mean()
-    means = (SIGNS * d).mean(1)
+    means = (sign_flips(len(d)) * d).mean(1)
     return float((np.abs(means) >= abs(observed) - 1e-12).mean())
 
 
@@ -165,18 +195,19 @@ def changes(data, rng, draws):
     trip_idx = draw_indices(rng, draws, n_trips)
     rows = []
     for metric in METRICS:
-        clean = data[metric]["expert_clean"]
-        clean_seed = rng.integers(0, SEEDS, size=(draws, SEEDS))
-        clean_boot = boot_mean(clean, trip_idx, clean_seed)
+        clean_all = data[metric]["expert_clean"]
         for name, arr in data[metric].items():
             if name == "expert_clean":
                 continue
-            seed_idx = rng.integers(0, SEEDS, size=(draws, SEEDS))
+            arr, clean = matched(arr, clean_all)                    # seed s of each, as far as both go
+            n = len(arr)
+            clean_boot = boot_mean(clean, trip_idx, rng.integers(0, n, size=(draws, n)))
+            seed_idx = rng.integers(0, n, size=(draws, n))
             d = (boot_mean(arr, trip_idx, seed_idx) - clean_boot) * 100
             lo, hi = interval(d)
             per_seed = (arr.mean(1) - clean.mean(1)) * 100          # seed s against seed s of clean BC
-            half = stats.t.ppf(0.975, SEEDS - 1) * per_seed.std(ddof=1) / np.sqrt(SEEDS)
-            rows.append({"metric": metric, "dataset": name, "clean_mean": clean.mean() * 100,
+            half = stats.t.ppf(0.975, n - 1) * per_seed.std(ddof=1) / np.sqrt(n)
+            rows.append({"metric": metric, "dataset": name, "seeds": n, "clean_mean": clean.mean() * 100,
                          "dataset_mean": arr.mean() * 100, "change": (arr.mean() - clean.mean()) * 100,
                          "ci_low": lo, "ci_high": hi, "p_permutation": permutation_p(arr, clean),
                          "p_paired_permutation": paired_permutation_p(arr, clean),
@@ -210,13 +241,15 @@ def draw_intervals(ch, path):
               ("success", "_p100", "Change in trips that reach the goal (points)", "Success, 100% of trips corrupted"))
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
     for ax, (metric, suffix, xlabel, title) in zip(axes, panels):
+        n = int(ch[(ch.metric == metric) & (ch.dataset == order[0] + suffix)].seeds.iloc[0])
+        title = f"{title} ({n} seeds)"
         for i, e in enumerate(order):
             r = ch[(ch.metric == metric) & (ch.dataset == e + suffix)].iloc[0]
             # dark: both intervals exclude zero (and, for collisions at 20%, Holm p below 0.05)
             solid = bool(r.solid) and (r.holm_p_six_errors < 0.05 if metric == "collision" else True)
             ax.errorbar(r.change, i, xerr=[[r.change - r.ci_low], [r.ci_high - r.change]], fmt="o", ms=8,
                         color=BLUE if solid else PALE, capsize=3, mec="white", mew=1.5, lw=2)
-            ax.annotate(f"{r.change:+.1f}", (r.change, i), xytext=(0, 10), textcoords="offset points",
+            ax.annotate(f"{r.change:+.2f}", (r.change, i), xytext=(0, 10), textcoords="offset points",
                         ha="center", fontsize=8.5, color=INK)
         ax.axvline(0, color=MUTED, lw=1)
         ax.set_xlabel(xlabel, color=MUTED, fontsize=9)
@@ -230,7 +263,7 @@ def draw_intervals(ch, path):
         ax.set_axisbelow(True)
     axes[0].set_yticks(range(len(order)))
     axes[0].set_yticklabels([LABEL[e] for e in order], fontsize=9.5, color=INK)
-    fig.suptitle("Change against clean BC with 95% bootstrap intervals (five seeds, same 200 test trips)",
+    fig.suptitle("Change against clean BC with 95% bootstrap intervals (same 200 test trips; seeds per panel)",
                  x=0.01, ha="left", color=MUTED, fontsize=9)
     fig.text(0.99, 0.01, "dark dot: bootstrap and seed intervals both exclude zero (collisions also need Holm p < 0.05)",
              ha="right", va="bottom", fontsize=8, color=MUTED)
@@ -258,16 +291,20 @@ def interactions(data, rng, draws):
     c = data["collision"]
     n_trips = c["expert_clean"].shape[1]
     trip_idx = draw_indices(rng, draws, n_trips)
-    seed_idx = rng.integers(0, SEEDS, size=(draws, SEEDS))
     rows = []
     for a, b in PAIRS:
-        ab = c[f"{a}_and_{b}"]
-        ps = per_seed_interaction(c[a], c[b], ab, c["expert_clean"])
-        boot = (boot_mean(ab, trip_idx, seed_idx) - boot_mean(c[a], trip_idx, seed_idx)
-                - boot_mean(c[b], trip_idx, seed_idx) + boot_mean(c["expert_clean"], trip_idx, seed_idx)) * 100
+        parts = [c[f"{a}_and_{b}"], c[a], c[b], c["expert_clean"]]
+        n = min(len(x) for x in parts)                          # a pair dataset may have fewer seeds than a single
+        ab, sa, sb, clean = (x[:n] for x in parts)
+        seed_idx = rng.integers(0, n, size=(draws, n))
+        ps = per_seed_interaction(sa, sb, ab, clean)
+        boot = (boot_mean(ab, trip_idx, seed_idx) - boot_mean(sa, trip_idx, seed_idx)
+                - boot_mean(sb, trip_idx, seed_idx) + boot_mean(clean, trip_idx, seed_idx)) * 100
         rows.append(summarize_seedwise(f"{a} + {b}", ps, boot))
-    mixed = c["mixed"]
-    singles = np.mean([c[e] for e in SINGLE], axis=0)           # (seeds, trips): average of the six single datasets
+    n = min([len(c["mixed"])] + [len(c[e]) for e in SINGLE])
+    mixed = c["mixed"][:n]
+    singles = np.mean([c[e][:n] for e in SINGLE], axis=0)       # (seeds, trips): average of the six single datasets
+    seed_idx = rng.integers(0, n, size=(draws, n))
     ps = (mixed.mean(1) - singles.mean(1)) * 100
     boot = (boot_mean(mixed, trip_idx, seed_idx) - boot_mean(singles, trip_idx, seed_idx)) * 100
     rows.append(summarize_seedwise("mixed minus average of six singles", ps, boot))
@@ -305,18 +342,20 @@ def main():
           f"collisions {data['collision']['expert_clean'].mean() * 100:.1f}%, "
           f"efficiency over all trips {data['efficiency_all']['expert_clean'].mean() * 100:.1f}"
           f"  ({args.draws} bootstrap draws, 252 permutations)\n")
-    cols = ["dataset", "dataset_mean", "change", "ci_low", "ci_high", "seed_ci_low", "seed_ci_high",
+    cols = ["dataset", "seeds", "dataset_mean", "change", "ci_low", "ci_high", "seed_ci_low", "seed_ci_high",
             "p_permutation", "holm_p_six_errors", "p_paired_permutation", "holm_p_paired", "solid"]
     titles = {"collision": "collision rate", "success": "success rate",
               "efficiency_all": "efficiency over all trips (failures count as zero)"}
     for metric in METRICS:
         print(f"Change in {titles[metric]} against clean BC (points), 95% intervals:")
         print(ch[ch.metric == metric][cols].round(3).to_string(index=False), "\n")
-    print(f"Unpaired test, five against five policies, smallest p it can give: {2 / len(LEFT):.4f}; "
-          f"after Holm for six errors: {6 * 2 / len(LEFT):.3f}")
-    print(f"Paired test, five seed pairs, smallest p it can give: {2 / len(SIGNS):.4f}; "
-          f"after Holm for six errors: {6 * 2 / len(SIGNS):.3f} "
-          f"(so the paired test cannot reach 0.05 at five seeds, whatever the effect size)\n")
+    for n in sorted({int(v) for v in ch.seeds.unique()}):
+        unpaired = 2 / len(splits(n)[0])
+        paired = 2 / len(sign_flips(n))
+        print(f"With {n} seeds against {n}: unpaired test floor {unpaired:.5f} raw, {min(1, 6 * unpaired):.4f} "
+              f"after Holm for six errors; paired test floor {paired:.5f} raw, "
+              f"{min(1, 6 * paired):.4f} after Holm.")
+    print()
     print("Interaction on collision rate (points):")
     print(ix.round(2).to_string(index=False))
     print("\nSaved results/brick9_changes.csv, brick9_interactions.csv, brick9_seed_results.csv "

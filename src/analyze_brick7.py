@@ -36,6 +36,10 @@ def style(ax):
 def summary():
     r = pd.read_csv("results/results.csv")
     r = r[r.dataset != "expert_driver"].copy()
+    # Every dataset this analysis adds (50% and 100% doses, matched cuts, pairs, mixed) has five seeds.
+    # Clean BC and the six errors at 20% later gained seeds 5 to 9 for the main comparison; here they are
+    # held to the same five seeds so each comparison meets seed s with seed s.
+    r = r[r.seed < 5]
     r[["success_rate", "collision_rate"]] *= 100
     s = r.groupby("dataset")[METRICS].agg(["mean", "std"])
     s.columns = [f"{m}_{a}" for m, a in s.columns]

@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from common import free_cells, make_env, xy_to_cell
-from stats_brick9 import KEY, SEEDS, SINGLE, dataset_list
+from stats_brick9 import KEY, SINGLE, available_seeds, dataset_list
 
 SHOW = ["expert_clean"] + SINGLE + [f"{e}_p100" for e in SINGLE]
 
@@ -49,7 +49,7 @@ def scores(trips_dir, mask, ref):
     the wrong seen and unseen labels onto its rows."""
     rows = []
     for name in dataset_list():
-        for seed in range(SEEDS):
+        for seed in available_seeds(trips_dir, name):
             t = pd.read_csv(Path(trips_dir) / f"{name}_seed{seed}.csv").sort_values("trip").reset_index(drop=True)
             assert len(t) == len(ref) and (t[KEY].values == ref.values).all(), f"trips differ in {name} seed {seed}"
             for group, m in (("seen", mask), ("unseen", ~mask)):
@@ -60,13 +60,21 @@ def scores(trips_dir, mask, ref):
 
 
 def summary(per_policy):
+    """Mean of each dataset inside each group, and its change against clean BC on the seeds both share.
+
+    Clean BC and the six errors at 20% have ten seeds; every other dataset has five. A five seed
+    dataset is compared against clean BC's first five seeds, the same matching stats_brick9.py uses,
+    so seed s always meets seed s and a dataset is never judged against a baseline it did not share.
+    """
     g = per_policy.groupby(["dataset", "group"])[["success_rate", "collision_rate"]].agg(["mean", "std"])
     g.columns = [f"{a}_{b}" for a, b in g.columns]
     out = g.reset_index()
-    clean = out[out.dataset == "expert_clean"].set_index("group")
+    clean = per_policy[per_policy.dataset == "expert_clean"]
+    seeds = per_policy.groupby("dataset").seed.apply(set)
     for metric in ("success_rate", "collision_rate"):
-        base = out.group.map(clean[f"{metric}_mean"])
-        out[f"{metric}_change"] = out[f"{metric}_mean"] - base
+        base = [clean[(clean.group == row.group) & clean.seed.isin(seeds[row.dataset])][metric].mean()
+                for row in out.itertuples()]
+        out[f"{metric}_change"] = out[f"{metric}_mean"] - np.array(base)
     return out
 
 
@@ -74,7 +82,7 @@ def wide(out, metric):
     """One row per dataset, the seen and unseen columns side by side."""
     p = out.pivot(index="dataset", columns="group", values=[f"{metric}_mean", f"{metric}_change"])
     p.columns = [f"{'value' if a.endswith('mean') else 'change'}_{b}" for a, b in p.columns]
-    return p.reindex(SHOW).round(1)
+    return p.reindex(SHOW).round(2) + 0.0      # + 0.0 turns a printed -0.00 into 0.00
 
 
 def main():

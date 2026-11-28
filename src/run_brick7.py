@@ -1,7 +1,8 @@
 """Brick 7 runner: trains and scores five seeds for every dataset, skipping models already scored.
 
-Run:  python src/run_brick7.py              (all groups, in order)
+Run:  python src/run_brick7.py              (all groups, seeds 0 to 4, in order)
       python src/run_brick7.py --group pairs
+      python src/run_brick7.py --group base --seeds 5 9   (five more seeds for clean and the six errors)
 
 Groups, in the order they run:
   base     clean data and the six single errors at 20% (the reference every comparison needs)
@@ -38,12 +39,15 @@ def scored():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--group", choices=list(GROUPS) + ["all"], default="all")
+    parser.add_argument("--seeds", nargs=2, type=int, default=(0, 4), metavar=("FIRST", "LAST"),
+                        help="inclusive range of training seeds to run, default 0 4")
     args = parser.parse_args()
+    seeds = range(args.seeds[0], args.seeds[1] + 1)
     groups = list(GROUPS) if args.group == "all" else [args.group]
     if "expert_driver" not in scored():
         subprocess.run([sys.executable, "src/evaluate.py", "--expert", "--models", "models/none*.pt"], check=False)
     for group in groups:
-        for seed in SEEDS:
+        for seed in seeds:
             for name in GROUPS[group]:
                 model = f"{name}_seed{seed}"
                 if model in scored():
